@@ -1,7 +1,9 @@
 use std::char;
 use std::io;
 use std::io::stdio;
+use std::str;
 
+#[deriving(Clone)]
 enum Token {
   Def,
   Extern,
@@ -9,6 +11,20 @@ enum Token {
   Number(f64),
   Char(char),
   EndOfFile
+}
+
+impl Eq for Token {
+  fn eq(&self, other: &Token) -> bool {
+     match (self, other) {
+       (&Def, &Def) => true,
+       (&Extern, &Extern) => true,
+       (&Identifier(ref val), &Identifier(ref oVal)) => val == oVal,
+       (&Number(val), &Number(oVal)) => val == oVal,
+       (&Char(val), &Char(oVal)) => val == oVal,
+       (&EndOfFile, &EndOfFile) => true,
+       (_, _) => false,
+     }
+  }
 }
 
 trait ExprAst {
@@ -43,19 +59,28 @@ struct FunctionAst {
   body: ~ExprAst
 }
 
+impl ExprAst for NumberExprAst {
+}
+impl ExprAst for VariableExprAst {
+}
+impl ExprAst for BinaryExprAst {
+}
+impl ExprAst for CallExprAst {
+}
+
 struct Parser {
-  tokenInput: Chan<Token>,
+  tokenInput: Port<Token>,
   currentToken: Token
 }
 
-type ParseResult = Result<~ExprAst, ~str>;
+type ParseResult<T> = Result<T, ~str>;
 
 impl Parser {
   fn getNextToken(&mut self) {
     self.currentToken = self.tokenInput.recv();
   }
 
-  fn parseNumberExpr(&mut self) -> ParseResult {
+  fn parseNumberExpr(&mut self) -> ParseResult<~ExprAst> {
     let val = match self.currentToken {
       Number(val) => val,
       _ => return Err(~"token not a number")
@@ -63,12 +88,16 @@ impl Parser {
 
     let expr = ~NumberExprAst{val: val};
     self.getNextToken();
-    return Ok(expr);
+    return Ok(expr as ~ExprAst);
   }
 
-  fn parseParenExpr(&mut self) -> ParseResult {
+  fn parseParenExpr(&mut self) -> ParseResult<~ExprAst> {
     self.getNextToken();
-    let expr = self.parseExpression();
+    let expr = match self.parseExpression() {
+      Ok(expr) => expr,
+      err => return err
+    };
+
     match self.currentToken {
       Char(')') => {},
       _ => return Err(~"expected ')'")
@@ -77,9 +106,9 @@ impl Parser {
     return Ok(expr);
   }
 
-  fn parseIdentifierExpr(&mut self) -> ParseResult {
+  fn parseIdentifierExpr(&mut self) -> ParseResult<~ExprAst> {
     let idName = match self.currentToken {
-      Identifier(name) => name,
+      Identifier(ref name) => name.clone(),
       _ => return Err(~"token not an identifier")
     };
 
@@ -87,7 +116,7 @@ impl Parser {
 
     match self.currentToken {
       Char('(') => {},
-      _ => return Ok(VariableExprAst{name: idName})
+      _ => return Ok(~VariableExprAst{name: idName} as ~ExprAst)
     }
 
     self.getNextToken();
@@ -95,7 +124,10 @@ impl Parser {
     if self.currentToken != Char(')') {
       loop {
         let arg = self.parseExpression();
-        args.push(arg);
+        match arg {
+          Ok(arg) => args.push(arg),
+          err => return err
+        }
 
         if self.currentToken == Char(')') {
           break;
@@ -111,19 +143,19 @@ impl Parser {
 
     self.getNextToken();
 
-    return Ok(CallExprAst {name: idName, args: args});
+    return Ok(~CallExprAst {callee: idName, args: args} as ~ExprAst);
   }
 
-  fn parsePrimary(&mut self) -> ParseResult {
+  fn parsePrimary(&mut self) -> ParseResult<~ExprAst> {
     match self.currentToken {
-      Identifier(_) => return Ok(self.parseIdentifierExpr()),
-      Number(_) => return Ok(self.parseNumberExpr()),
-      '(' => return Ok(self.parseParenExpr()),
-      what => return Err(format!("unknown token {:?} when expecting an expression", what))
+      Identifier(_) => return self.parseIdentifierExpr(),
+      Number(_) => return self.parseNumberExpr(),
+      Char('(') => return self.parseParenExpr(),
+      _ => return Err(~"unknown token when expecting an expression")
     }
   }
 
-  fn parseExpression(&mut self) -> ParseResult {
+  fn parseExpression(&mut self) -> ParseResult<~ExprAst> {
     let lhs: ~ExprAst = match self.parsePrimary() {
       Ok(lhs) => lhs,
       err => return err
@@ -131,7 +163,7 @@ impl Parser {
     return self.parseBinOpRhs(0, lhs);
   }
 
-  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: ~ExprAst) -> ParseResult {
+  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: ~ExprAst) -> ParseResult<~ExprAst> {
     let mut lhs = startLhs;
     loop {
       let tokenPrec = self.getTokenPrecedence();
@@ -150,20 +182,24 @@ impl Parser {
       let nextPrec = self.getTokenPrecedence();
 
       if tokenPrec < nextPrec {
-        rhs = self.parseBinOpRhs(tokenPrec+1, rhs);
+        rhs = match self.parseBinOpRhs(tokenPrec+1, rhs) {
+          Ok(rhs) => rhs,
+          err => return err
+        };
       }
-      lhs = ~BinaryExprAst {binOp: binOp, lhs: lhs, rhs: rhs};
+      lhs = ~BinaryExprAst {op: binOp, lhs: lhs, rhs: rhs} as ~ExprAst;
     }
   }
 
-  fn parsePrototype(&mut self) -> ParseResult { // possibly need sep. of Prototype and Expr
+  fn parsePrototype(&mut self) -> ParseResult<~PrototypeAst> { // possibly need sep. of Prototype and Expr
     let fnName: ~str = match self.currentToken {
-      Identifier(name) => name,
+      Identifier(ref name) => name.clone(),
       _ => return Err(~"Expected function name in prototype")
     };
 
     self.getNextToken();
     if self.currentToken != Char('(') {
+      println!("had a {:?}", self.currentToken);
       return Err(~"Expected '(' in prototype");
     }
 
@@ -171,7 +207,7 @@ impl Parser {
     loop {
       self.getNextToken();
       match self.currentToken {
-        Identifier(name) => argNames.push(name),
+        Identifier(ref name) => argNames.push(name.clone()),
         _ => break
       }
     }
@@ -184,25 +220,31 @@ impl Parser {
     return Ok(~PrototypeAst {name: fnName, argNames: argNames});
   }
 
-  fn parseDefinition(&mut self) -> ParseResult {
+  fn parseDefinition(&mut self) -> ParseResult<~FunctionAst> {
     self.getNextToken();
-    let proto = self.parsePrototype().unwrap();
-    let expr = self.parseExpression().unwrap();
-    return FunctionAst{proto: proto, body: expr};
+    let proto = match self.parsePrototype() {
+      Ok(proto) => proto,
+      Err(err) => return Err(err)
+    };
+    let expr = match self.parseExpression() {
+      Ok(expr) => expr,
+      Err(err) => return Err(err)
+    };
+    return Ok(~FunctionAst{proto: proto, body: expr});
   }
 
-  fn parseExtern(&mut self) -> ParseResult {
+  fn parseExtern(&mut self) -> ParseResult<~PrototypeAst> {
     self.getNextToken(); // consume "expr"
     return self.parsePrototype();
   }
 
-  fn parseTopLevelExpr(&mut self) -> ParseResult {
+  fn parseTopLevelExpr(&mut self) -> ParseResult<~FunctionAst> {
     let expr = match self.parseExpression() {
       Ok(expr) => expr,
-      err => return err
+      Err(err) => return Err(err)
     };
 
-    let proto = ~PrototypeAst {name: "", argNames: ~[]};
+    let proto = ~PrototypeAst {name: ~"", argNames: ~[]};
     return Ok(~FunctionAst{proto: proto, body: expr});
   }
 
@@ -226,14 +268,18 @@ impl Parser {
     self.getNextToken();
 
     loop {
-      print!("ready> ");
-      stdio::flush();
       match self.currentToken {
         Def => self.handleDefinition(),
         Extern => self.handleExtern(),
-        Char(';') => self.getNextToken(),
+        Char(';') => {
+          self.getNextToken();
+          continue;
+        },
         _ => self.handleTopLevelExpression()
       }
+
+      print!("ready> ");
+      stdio::flush();
     }
   }
 
@@ -271,71 +317,104 @@ impl Parser {
   }
 }
 
-fn readTokens(tokenChan: Chan<Token>) {
+fn readTokens(tokenChan: Chan<Token>) -> proc() {
   return proc() {
     let mut reader = io::stdin();
-    let mut lastChar = ' ';
+    let mut lastChr = ' ';
 
-    for chr in reader.chars() {
-      if chr == ' ' {
-        continue
+    loop {
+      while lastChr == ' ' || lastChr == '\r' || lastChr == '\n' || lastChr == '\t' {
+        lastChr = match reader.read_char() {
+          Ok(chr) => chr,
+          Err(_) => break
+        };
       }
-      if char::is_alphabetic(chr) { // identifier [a-zA-Z][a-zA-Z0-9]*
-        let mut identifierStr : ~str = ~"";
-        identifierStr += chr;
+
+      if char::is_alphabetic(lastChr) { // identifier [a-zA-Z][a-zA-Z0-9]*
+        let mut identifierStr : ~[char] = ~[lastChr];
         loop {
           match reader.read_char() {
-            Some(chr) => {
+            Ok(chr) => {
               if char::is_alphabetic(chr) {
-                identifierStr += chr;
+                identifierStr.push(chr);
               } else {
+                lastChr = chr;
                 break;
               }
             },
-            None => return EndOfFile
+            Err(_) => {
+              tokenChan.send(EndOfFile);
+              return;
+            }
           }
         }
-        match identifierStr {
-          ~"def" => return Def,
-          ~"extern" => return Extern,
-          id => return Identifier(id)
+        match str::from_chars(identifierStr) {
+          ~"def" => {
+            tokenChan.send(Def);
+            continue;
+          },
+          ~"extern" => {
+            tokenChan.send(Extern);
+            continue;
+          },
+          id => {
+            tokenChan.send(Identifier(id));
+            continue;
+          }
         }
       }
 
-      if char::is_digit(chr) || chr == '.' { // number: [0-9.]+
-        let mut numStr = ~"";
-        numStr += chr;
+      if char::is_digit(lastChr) || lastChr == '.' { // number: [0-9.]+
+        let mut numStr = ~[lastChr];
         loop {
           match reader.read_char() {
-            Some(chr) => {
+            Ok(chr) => {
               if char::is_digit(chr) || chr == '.' {
-                numStr += chr;
+                numStr.push(chr);
               } else {
+                lastChr = chr;
                 break;
               }
             },
-            None => return EndOfFile
+            Err(_) => {
+              tokenChan.send(EndOfFile);
+              return;
+            }
           }
         }
-        return Number(from_str::<f64>(numStr));
+        tokenChan.send(Number(match from_str::<f64>(str::from_chars(numStr)) {
+          Some(val) => val,
+          None => {
+            println!("Malformed number");
+            continue;
+          }
+        }));
+        continue;
       }
 
-      if chr == '#' {
+      if lastChr == '#' {
         loop {
           match reader.read_char() {
-            Some(chr) => {
+            Ok(chr) => {
               if chr == '\r' || chr == '\n' {
+                lastChr = ' ';
                 break;
               }
             },
-            None => return EndOfFile
+            Err(_) => {
+              tokenChan.send(EndOfFile);
+              return;
+            }
           }
         }
+        continue;
       }
 
-      return Char(chr);
+      tokenChan.send(Char(lastChr));
+      // consume lastChr
+      lastChr = ' ';
     }
-    return EndOfFile;
+    tokenChan.send(EndOfFile);
   };
 }
 
@@ -343,5 +422,6 @@ fn main() {
   let (tokenPort, tokenChan) = Chan::new();
 
   spawn(readTokens(tokenChan));
-  let mut parser = Parser {tokenInput: tokenChan, currentToken: Char(' ')};
+  let mut parser = Parser {tokenInput: tokenPort, currentToken: Char(' ')};
+  parser.run();
 }
