@@ -3,7 +3,7 @@ extern crate rustc;
 
 use collections::HashMap;
 
-use rustc::lib::llvm::{ValueRef, ModuleRef, TypeRef, ContextRef, BuilderRef, RealULT, False};
+use rustc::lib::llvm::{BuilderRef, ContextRef, False, ModuleRef, RealULT, TypeRef, ValueRef};
 use rustc::lib::llvm::llvm;
 
 use std::char;
@@ -79,9 +79,10 @@ impl ExprAst for NumberExprAst {
 
 impl ExprAst for VariableExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
-    return match parser.namedValues.find(&self.name) {
-      Some(v) => *v,
-      None => fail!("Unknown variable name")
+    println!("panv: {}", parser.namedValues);
+    return match parser.namedValues.find_copy(&self.name) {
+      Some(v) => v,
+      None => fail!("Unknown variable name {}", self.name)
     };
   }
 }
@@ -137,11 +138,27 @@ impl PrototypeAst {
     for (i, argName) in self.argNames.iter().enumerate() {
       let llarg = llvm::LLVMGetParam(fun, i as c_uint);
       argName.with_c_str(|name| llvm::LLVMSetValueName(llarg, name));
+      parser.namedValues.insert(argName.clone(), llarg);
     }
 
     return fun;
   }
 }
+
+impl FunctionAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    parser.namedValues.clear();
+
+    let fun = self.proto.codegen(parser);
+    let basicBlock = "entry".with_c_str(|name| llvm::LLVMAppendBasicBlockInContext(parser.contextRef, fun, name));
+    llvm::LLVMPositionBuilderAtEnd(parser.builderRef, basicBlock);
+    let body = self.body.codegen(parser);
+    llvm::LLVMBuildRet(parser.builderRef, body);
+
+    return fun;
+  }
+}
+
 
 struct Parser {
   tokenInput: Receiver<Token>,
@@ -391,7 +408,13 @@ impl Parser {
   fn handleDefinition(&mut self) {
     let def = self.parseDefinition();
     match def {
-      Ok(def) => println!("Parsed a function definition"),
+      Ok(def) => {
+        println!("Parsed a function definition");
+        unsafe {
+          let fun = def.codegen(self);
+          llvm::LLVMDumpValue(fun);
+        }
+      }
       Err(why) => {
         println!("Error: {}", why);
         self.getNextToken();
@@ -402,7 +425,13 @@ impl Parser {
   fn handleExtern(&mut self) {
     let ext = self.parseExtern();
     match ext {
-      Ok(ext) => println!("Parsed an extern"),
+      Ok(ext) => {
+        println!("Parsed an extern");
+        unsafe {
+          let extLL = ext.codegen(self);
+          llvm::LLVMDumpValue(extLL);
+        }
+      },
       Err(why) => {
         println!("Error parsing extern: {}", why);
         self.getNextToken();
@@ -413,7 +442,13 @@ impl Parser {
   fn handleTopLevelExpression(&mut self) {
     let tle = self.parseTopLevelExpr();
     match tle {
-      Ok(tle) => println!("Parsed a top level expr"),
+      Ok(tle) => {
+        println!("Parsed a top level expr");
+        unsafe {
+          let tleLL = tle.codegen(self);
+          llvm::LLVMDumpValue(tleLL);
+        }
+      },
       Err(why) => {
         println!("Error parsing tle: {}", why);
         self.getNextToken();
