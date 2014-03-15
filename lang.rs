@@ -79,7 +79,6 @@ impl ExprAst for NumberExprAst {
 
 impl ExprAst for VariableExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
-    println!("panv: {}", parser.namedValues);
     return match parser.namedValues.find_copy(&self.name) {
       Some(v) => v,
       None => fail!("Unknown variable name {}", self.name)
