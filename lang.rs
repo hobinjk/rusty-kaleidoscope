@@ -1,17 +1,24 @@
+#[feature(globs)];
+
 extern crate collections;
-extern crate rustc;
 
 use collections::HashMap;
 
-use rustc::lib::llvm::{BuilderRef, ContextRef, False, ModuleRef, RealULT, TypeRef, ValueRef};
-use rustc::lib::llvm::llvm;
+use lib::llvm::{BuilderRef, ContextRef, ExecutionEngineRef, False, ModuleRef, PassManagerRef, RealULT, TypeRef, ValueRef, PrintMessageAction};
+use lib::llvm::llvm;
 
 use std::char;
 use std::io;
 use std::io::stdio;
 use std::str;
 use std::vec;
+use std::vec_ng::Vec;
 use std::libc::{c_uint};
+
+pub mod lib {
+  pub mod llvm;
+  pub mod llvmdeps;
+}
 
 #[deriving(Clone)]
 enum Token {
@@ -154,6 +161,12 @@ impl FunctionAst {
     let body = self.body.codegen(parser);
     llvm::LLVMBuildRet(parser.builderRef, body);
 
+    if llvm::LLVMVerifyFunction(fun, PrintMessageAction as c_uint) != 0 {
+      println!("Function verify failed");
+    }
+
+    llvm::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
+
     return fun;
   }
 }
@@ -165,6 +178,8 @@ struct Parser {
   moduleRef: ModuleRef,
   builderRef: BuilderRef,
   contextRef: ContextRef,
+  executionEngineRef: ExecutionEngineRef,
+  functionPassManagerRef: PassManagerRef,
   namedValues: HashMap<~str, ValueRef>
 }
 
@@ -172,14 +187,41 @@ type ParseResult<T> = Result<T, ~str>;
 
 impl Parser {
   fn new(tokenInput: Receiver<Token>) -> Parser {
+    unsafe {
+      if llvm::LLVMRustInitializeNativeTarget() != 0 {
+        fail!("initializing native target");
+      }
+    }
+
     let llcx = unsafe { llvm::LLVMContextCreate() };
     let llmod = unsafe {
       "kaleidoscope".with_c_str(|name| {
         llvm::LLVMModuleCreateWithNameInContext(name, llcx)
       })
     };
+    let llfpm = unsafe {
+      llvm::LLVMCreateFunctionPassManagerForModule(llmod)
+    };
+    unsafe {
+      llvm::LLVMAddBasicAliasAnalysisPass(llfpm);
+      llvm::LLVMAddInstructionCombiningPass(llfpm);
+      llvm::LLVMAddReassociatePass(llfpm);
+      llvm::LLVMAddGVNPass(llfpm);
+      llvm::LLVMAddCFGSimplificationPass(llfpm);
+
+      llvm::LLVMInitializeFunctionPassManager(llfpm);
+    }
+
     let llbuilder = unsafe {
       llvm::LLVMCreateBuilderInContext(llcx)
+    };
+
+    let llee = unsafe {
+      // initialize vars to NULL
+      let mut llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
+      let mut err: *char = 0 as *char;
+      llvm::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
+      llee
     };
     return Parser {
       tokenInput: tokenInput,
@@ -187,6 +229,8 @@ impl Parser {
       moduleRef: llmod,
       builderRef: llbuilder,
       contextRef: llcx,
+      executionEngineRef: llee,
+      functionPassManagerRef: llfpm,
       namedValues: HashMap::new()
     };
   }
@@ -444,8 +488,15 @@ impl Parser {
       Ok(tle) => {
         println!("Parsed a top level expr");
         unsafe {
-          let tleLL = tle.codegen(self);
-          llvm::LLVMDumpValue(tleLL);
+          let tleFun = tle.codegen(self);
+          llvm::LLVMDumpValue(tleFun);
+          // we have a 0 arg function, call it using the executionEngineRef
+          let argsV: ~[ValueRef] = ~[];
+          println!("Executing function");
+          let retValue = llvm::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
+          let doubleTy = llvm::LLVMDoubleTypeInContext(self.contextRef);
+          let fl = llvm::LLVMGenericValueToFloat(doubleTy, retValue);
+          println!("Returned {}", fl);
         }
       },
       Err(why) => {
