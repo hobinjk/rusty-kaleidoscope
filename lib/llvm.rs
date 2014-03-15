@@ -11,10 +11,7 @@
 #[allow(non_uppercase_pattern_statics)];
 #[allow(non_camel_case_types)];
 
-use std::c_str::ToCStr;
-use std::cell::RefCell;
-use std::libc::{c_uint, c_ushort, c_void, free};
-use std::str::raw::from_c_str;
+use std::libc::c_uint;
 
 pub type Opcode = u32;
 pub type Bool = c_uint;

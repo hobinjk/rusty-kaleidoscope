@@ -11,7 +11,6 @@ use std::char;
 use std::io;
 use std::io::stdio;
 use std::str;
-use std::vec;
 use std::vec_ng::Vec;
 use std::libc::{c_uint};
 
@@ -64,12 +63,12 @@ struct BinaryExprAst {
 
 struct CallExprAst {
   callee: ~str,
-  args: ~[~ExprAst]
+  args: Vec<~ExprAst>
 }
 
 struct PrototypeAst {
   name: ~str,
-  argNames: ~[~str]
+  argNames: Vec<~str>
 }
 
 struct FunctionAst {
@@ -120,7 +119,7 @@ impl ExprAst for CallExprAst {
     let calleeF = self.callee.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
 
     // TODO check arg size
-    let mut argsV : ~[ValueRef] = ~[];
+    let mut argsV : Vec<ValueRef> = Vec::new();
     for arg in self.args.iter() {
       argsV.push(arg.codegen(parser));
     }
@@ -218,8 +217,8 @@ impl Parser {
 
     let llee = unsafe {
       // initialize vars to NULL
-      let mut llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
-      let mut err: *char = 0 as *char;
+      let llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
+      let err: *char = 0 as *char;
       llvm::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
       llee
     };
@@ -237,7 +236,7 @@ impl Parser {
 
   unsafe fn getDoubleFunType(&mut self, argc: uint) -> TypeRef {
     let ty = llvm::LLVMDoubleTypeInContext(self.contextRef);
-    let doubles : ~[TypeRef] = vec::from_fn(argc, |_| ty);
+    let doubles: Vec<TypeRef> = Vec::from_fn(argc, |_| ty);
     return llvm::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
   }
 
@@ -285,7 +284,7 @@ impl Parser {
     }
 
     self.getNextToken();
-    let mut args: ~[~ExprAst] = ~[];
+    let mut args: Vec<~ExprAst> = Vec::new();
     if self.currentToken != Char(')') {
       loop {
         let arg = self.parseExpression();
@@ -368,7 +367,7 @@ impl Parser {
       return Err(~"Expected '(' in prototype");
     }
 
-    let mut argNames: ~[~str] = ~[];
+    let mut argNames: Vec<~str> = Vec::new();
     loop {
       self.getNextToken();
       match self.currentToken {
@@ -409,7 +408,7 @@ impl Parser {
       Err(err) => return Err(err)
     };
 
-    let proto = ~PrototypeAst {name: ~"", argNames: ~[]};
+    let proto = ~PrototypeAst {name: ~"", argNames: Vec::new()};
     return Ok(~FunctionAst{proto: proto, body: expr});
   }
 
@@ -491,7 +490,7 @@ impl Parser {
           let tleFun = tle.codegen(self);
           llvm::LLVMDumpValue(tleFun);
           // we have a 0 arg function, call it using the executionEngineRef
-          let argsV: ~[ValueRef] = ~[];
+          let argsV: Vec<ValueRef> = Vec::new();
           println!("Executing function");
           let retValue = llvm::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
           let doubleTy = llvm::LLVMDoubleTypeInContext(self.contextRef);
@@ -521,7 +520,9 @@ fn readTokens(tokenSender: Sender<Token>) -> proc() {
       }
 
       if char::is_alphabetic(lastChr) { // identifier [a-zA-Z][a-zA-Z0-9]*
-        let mut identifierStr : ~[char] = ~[lastChr];
+        let mut identifierStr: Vec<char> = Vec::new();
+        identifierStr.push(lastChr);
+
         loop {
           match reader.read_char() {
             Ok(chr) => {
@@ -538,7 +539,7 @@ fn readTokens(tokenSender: Sender<Token>) -> proc() {
             }
           }
         }
-        let identifier = str::from_chars(identifierStr);
+        let identifier = str::from_chars(identifierStr.as_slice());
         if identifier == ~"def" {
           tokenSender.send(Def);
         } else if identifier == ~"extern" {
@@ -550,7 +551,8 @@ fn readTokens(tokenSender: Sender<Token>) -> proc() {
       }
 
       if char::is_digit(lastChr) || lastChr == '.' { // number: [0-9.]+
-        let mut numStr = ~[lastChr];
+        let mut numStr: Vec<char> = Vec::new();
+        numStr.push(lastChr);
         loop {
           match reader.read_char() {
             Ok(chr) => {
@@ -567,7 +569,7 @@ fn readTokens(tokenSender: Sender<Token>) -> proc() {
             }
           }
         }
-        tokenSender.send(Number(match from_str::<f64>(str::from_chars(numStr)) {
+        tokenSender.send(Number(match from_str::<f64>(str::from_chars(numStr.as_slice())) {
           Some(val) => val,
           None => {
             println!("Malformed number");
