@@ -1,7 +1,17 @@
+extern crate collections;
+extern crate rustc;
+
+use collections::HashMap;
+
+use rustc::lib::llvm::{ValueRef, ModuleRef, TypeRef, ContextRef, BuilderRef, RealULT, False};
+use rustc::lib::llvm::llvm;
+
 use std::char;
 use std::io;
 use std::io::stdio;
 use std::str;
+use std::vec;
+use std::libc::{c_uint};
 
 #[deriving(Clone)]
 enum Token {
@@ -28,6 +38,7 @@ impl Eq for Token {
 }
 
 trait ExprAst {
+  unsafe fn codegen(&self, &mut Parser) -> ValueRef;
 }
 
 struct NumberExprAst {
@@ -60,22 +71,116 @@ struct FunctionAst {
 }
 
 impl ExprAst for NumberExprAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    let ty = llvm::LLVMDoubleTypeInContext(parser.contextRef);
+    return llvm::LLVMConstReal(ty, self.val);
+  }
 }
+
 impl ExprAst for VariableExprAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    return match parser.namedValues.find(&self.name) {
+      Some(v) => *v,
+      None => fail!("Unknown variable name")
+    };
+  }
 }
 impl ExprAst for BinaryExprAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    let lhsValue = self.lhs.codegen(parser);
+    let rhsValue = self.rhs.codegen(parser);
+    match self.op {
+      Char('+') => return "addtmp".with_c_str(|name| llvm::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('-') => return "subtmp".with_c_str(|name| llvm::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('*') => return "multmp".with_c_str(|name| llvm::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('<') => {
+
+        let cmpValue = "cmptmp".with_c_str(|name| llvm::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, name));
+        let ty = llvm::LLVMDoubleTypeInContext(parser.contextRef);
+        return "booltmp".with_c_str(|name| llvm::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, name));
+      }
+      _ => {
+        fail!("llvm code gen failed, invalid binary operation");
+      }
+    }
+
+  }
 }
+
 impl ExprAst for CallExprAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    let funType : TypeRef = parser.getDoubleFunType(self.args.len());
+    let calleeF = self.callee.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+
+    // TODO check arg size
+    let mut argsV : ~[ValueRef] = ~[];
+    for arg in self.args.iter() {
+      argsV.push(arg.codegen(parser));
+    }
+
+    return "calltmp".with_c_str(|name| llvm::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, name));
+  }
+}
+
+impl PrototypeAst {
+  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+    let funType = parser.getDoubleFunType(self.argNames.len());
+    let fun = self.name.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+    if llvm::LLVMCountBasicBlocks(fun) != 0 {
+      fail!("Redefinition of function");
+    }
+    let nArgs = llvm::LLVMCountParams(fun) as uint;
+    if nArgs != 0 && nArgs != self.argNames.len() {
+      fail!("Redefinition of function with different argument count");
+    }
+
+    for (i, argName) in self.argNames.iter().enumerate() {
+      let llarg = llvm::LLVMGetParam(fun, i as c_uint);
+      argName.with_c_str(|name| llvm::LLVMSetValueName(llarg, name));
+    }
+
+    return fun;
+  }
 }
 
 struct Parser {
-  tokenInput: Port<Token>,
-  currentToken: Token
+  tokenInput: Receiver<Token>,
+  currentToken: Token,
+  moduleRef: ModuleRef,
+  builderRef: BuilderRef,
+  contextRef: ContextRef,
+  namedValues: HashMap<~str, ValueRef>
 }
 
 type ParseResult<T> = Result<T, ~str>;
 
 impl Parser {
+  fn new(tokenInput: Receiver<Token>) -> Parser {
+    let llcx = unsafe { llvm::LLVMContextCreate() };
+    let llmod = unsafe {
+      "kaleidoscope".with_c_str(|name| {
+        llvm::LLVMModuleCreateWithNameInContext(name, llcx)
+      })
+    };
+    let llbuilder = unsafe {
+      llvm::LLVMCreateBuilderInContext(llcx)
+    };
+    return Parser {
+      tokenInput: tokenInput,
+      currentToken: Char(' '),
+      moduleRef: llmod,
+      builderRef: llbuilder,
+      contextRef: llcx,
+      namedValues: HashMap::new()
+    };
+  }
+
+  unsafe fn getDoubleFunType(&mut self, argc: uint) -> TypeRef {
+    let ty = llvm::LLVMDoubleTypeInContext(self.contextRef);
+    let doubles : ~[TypeRef] = vec::from_fn(argc, |_| ty);
+    return llvm::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
+  }
+
   fn getNextToken(&mut self) {
     self.currentToken = self.tokenInput.recv();
   }
@@ -317,7 +422,7 @@ impl Parser {
   }
 }
 
-fn readTokens(tokenChan: Chan<Token>) -> proc() {
+fn readTokens(tokenSender: Sender<Token>) -> proc() {
   return proc() {
     let mut reader = io::stdin();
     let mut lastChr = ' ';
@@ -343,25 +448,20 @@ fn readTokens(tokenChan: Chan<Token>) -> proc() {
               }
             },
             Err(_) => {
-              tokenChan.send(EndOfFile);
+              tokenSender.send(EndOfFile);
               return;
             }
           }
         }
-        match str::from_chars(identifierStr) {
-          ~"def" => {
-            tokenChan.send(Def);
-            continue;
-          },
-          ~"extern" => {
-            tokenChan.send(Extern);
-            continue;
-          },
-          id => {
-            tokenChan.send(Identifier(id));
-            continue;
-          }
+        let identifier = str::from_chars(identifierStr);
+        if identifier == ~"def" {
+          tokenSender.send(Def);
+        } else if identifier == ~"extern" {
+          tokenSender.send(Extern);
+        } else {
+          tokenSender.send(Identifier(identifier));
         }
+        continue;
       }
 
       if char::is_digit(lastChr) || lastChr == '.' { // number: [0-9.]+
@@ -377,12 +477,12 @@ fn readTokens(tokenChan: Chan<Token>) -> proc() {
               }
             },
             Err(_) => {
-              tokenChan.send(EndOfFile);
+              tokenSender.send(EndOfFile);
               return;
             }
           }
         }
-        tokenChan.send(Number(match from_str::<f64>(str::from_chars(numStr)) {
+        tokenSender.send(Number(match from_str::<f64>(str::from_chars(numStr)) {
           Some(val) => val,
           None => {
             println!("Malformed number");
@@ -402,7 +502,7 @@ fn readTokens(tokenChan: Chan<Token>) -> proc() {
               }
             },
             Err(_) => {
-              tokenChan.send(EndOfFile);
+              tokenSender.send(EndOfFile);
               return;
             }
           }
@@ -410,18 +510,17 @@ fn readTokens(tokenChan: Chan<Token>) -> proc() {
         continue;
       }
 
-      tokenChan.send(Char(lastChr));
+      tokenSender.send(Char(lastChr));
       // consume lastChr
       lastChr = ' ';
     }
-    tokenChan.send(EndOfFile);
   };
 }
 
 fn main() {
-  let (tokenPort, tokenChan) = Chan::new();
+  let (tokenSender, tokenReceiver) = channel();
 
-  spawn(readTokens(tokenChan));
-  let mut parser = Parser {tokenInput: tokenPort, currentToken: Char(' ')};
+  spawn(readTokens(tokenSender));
+  let mut parser = Parser::new(tokenReceiver);
   parser.run();
 }
