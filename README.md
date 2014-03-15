@@ -41,18 +41,18 @@ ready> def a(b) b*b;
 Parsed a function definition
 
 define double @a(double %b) {
-  entry:
-    %multmp = fmul double %b, %b
-      ret double %multmp
+entry:
+  %multmp = fmul double %b, %b
+  ret double %multmp
 }
 
 ready> a(5);
 Parsed a top level expr
 
 define double @0() {
-  entry:
-    %calltmp = call double @a(double 5.000000e+00)
-      ret double %calltmp
+entry:
+  %calltmp = call double @a(double 5.000000e+00)
+  ret double %calltmp
 }
 
 Executing function
@@ -61,19 +61,19 @@ ready> def c(x) a(x+2);
 Parsed a function definition
 
 define double @c(double %x) {
-  entry:
-    %addtmp = fadd double 2.000000e+00, %x
-      %calltmp = call double @a(double %addtmp)
-        ret double %calltmp
+entry:
+  %addtmp = fadd double 2.000000e+00, %x
+  %calltmp = call double @a(double %addtmp)
+  ret double %calltmp
 }
 
 ready> c(3);
 Parsed a top level expr
 
 define double @1() {
-  entry:
-    %calltmp = call double @c(double 3.000000e+00)
-      ret double %calltmp
+entry:
+  %calltmp = call double @c(double 3.000000e+00)
+  ret double %calltmp
 }
 
 Executing function
