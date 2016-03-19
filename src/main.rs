@@ -203,7 +203,7 @@ impl Parser {
     }
 
     let llcx = unsafe {
-        llvm::core::LLVMContextCreate();
+        llvm::core::LLVMContextCreate()
     };
     let llmod = unsafe {
       llvm::core::LLVMModuleCreateWithNameInContext(cstr("kaleidoscope").as_ptr(), llcx)
@@ -225,10 +225,10 @@ impl Parser {
       llvm::core::LLVMCreateBuilderInContext(llcx)
     };
 
-    let llee = unsafe {
+    let mut llee = unsafe {
       // initialize vars to NULL
-      let llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
-      let err: *mut i8 = 0 as *mut i8;
+      let mut llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
+      let mut err: *mut i8 = 0 as *mut i8;
       llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut llee, llmod, &mut err);
       llee
     };
@@ -247,12 +247,12 @@ impl Parser {
 
   unsafe fn getDoubleFunType(&mut self, argc: usize) -> LLVMTypeRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
-    let doubles: Vec<LLVMTypeRef> = (0..argc).map(|_| ty).collect();
+    let mut doubles: Vec<LLVMTypeRef> = (0..argc).map(|_| ty).collect();
     return llvm::core::LLVMFunctionType(ty, doubles.as_mut_ptr(), argc as c_uint, 0);
   }
 
   fn getNextToken(&mut self) {
-    self.currentToken = self.tokens[self.tokenIndex];
+    self.currentToken = self.tokens[self.tokenIndex].clone();
     self.tokenIndex += 1;
   }
 
