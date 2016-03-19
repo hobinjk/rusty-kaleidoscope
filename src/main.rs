@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use std::char;
 use std::ffi;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::str;
 use std::vec;
 use libc::{c_uint};
@@ -429,7 +429,7 @@ impl Parser {
 
   fn run(&mut self) {
     print!("ready> ");
-    stdio::flush();
+    io::stdout().flush();
     self.getNextToken();
 
     loop {
@@ -444,7 +444,7 @@ impl Parser {
       }
 
       print!("ready> ");
-      stdio::flush();
+      io::stdout().flush();
     }
   }
 
