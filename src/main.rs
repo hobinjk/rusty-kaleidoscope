@@ -279,7 +279,7 @@ impl Parser {
     }
 
     self.getNextToken();
-    let mut args: Vec<ExprAst> = Vec::new();
+    let mut args: Vec<Box<ExprAst>> = Vec::new();
     if self.currentToken != Char(')') {
       loop {
         let arg = self.parseExpression();
@@ -315,7 +315,7 @@ impl Parser {
   }
 
   fn parseExpression(&mut self) -> ParseResult<Box<ExprAst>> {
-    let lhs: ExprAst = match self.parsePrimary() {
+    let lhs: Box<ExprAst> = match self.parsePrimary() {
       Ok(lhs) => lhs,
       err => return err
     };
