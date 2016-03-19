@@ -276,7 +276,7 @@ impl Parser {
 
     match self.currentToken {
       Char('(') => {},
-      _ => return Ok(VariableExprAst{name: idName} as ExprAst)
+      _ => return Ok(Box::new(VariableExprAst{name: idName}))
     }
 
     self.getNextToken();
@@ -303,7 +303,7 @@ impl Parser {
 
     self.getNextToken();
 
-    return Ok(CallExprAst {callee: idName, args: args} as ExprAst);
+    return Ok(Box::new(CallExprAst {callee: idName, args: args}));
   }
 
   fn parsePrimary(&mut self) -> ParseResult<Box<ExprAst>> {
@@ -380,7 +380,7 @@ impl Parser {
     return Ok(Box::new(PrototypeAst {name: fnName, argNames: argNames}));
   }
 
-  fn parseDefinition(&mut self) -> ParseResult<FunctionAst> {
+  fn parseDefinition(&mut self) -> ParseResult<Box<FunctionAst>> {
     self.getNextToken();
     let proto = match self.parsePrototype() {
       Ok(proto) => proto,
@@ -390,22 +390,22 @@ impl Parser {
       Ok(expr) => expr,
       Err(err) => return Err(err)
     };
-    return Ok(FunctionAst{proto: proto, body: expr});
+    return Ok(Box::new(FunctionAst{proto: proto, body: expr}));
   }
 
-  fn parseExtern(&mut self) -> ParseResult<PrototypeAst> {
+  fn parseExtern(&mut self) -> ParseResult<Box<PrototypeAst>> {
     self.getNextToken(); // consume "expr"
     return self.parsePrototype();
   }
 
-  fn parseTopLevelExpr(&mut self) -> ParseResult<FunctionAst> {
+  fn parseTopLevelExpr(&mut self) -> ParseResult<Box<FunctionAst>> {
     let expr = match self.parseExpression() {
       Ok(expr) => expr,
       Err(err) => return Err(err)
     };
 
-    let proto = PrototypeAst {name: "".to_string(), argNames: Vec::new()};
-    return Ok(FunctionAst{proto: proto, body: expr});
+    let proto = Box::new(PrototypeAst {name: "".to_string(), argNames: Vec::new()});
+    return Ok(Box::new(FunctionAst{proto: proto, body: expr}));
   }
 
   fn getTokenPrecedence(&mut self) -> int {
