@@ -13,7 +13,7 @@ use llvm::analysis::LLVMVerifyFunction;
 use llvm::LLVMRealPredicate;
 
 use std::char;
-use std::ffi;
+use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::str;
 use std::vec;
@@ -78,7 +78,7 @@ struct FunctionAst {
   body: Box<ExprAst>
 }
 
-fn cstr<'a>(input: &'a str) -> &'a CString {
+fn cstr<'a>(input: &'a str) -> CString {
     return CString::new(input).unwrap()
 }
 
