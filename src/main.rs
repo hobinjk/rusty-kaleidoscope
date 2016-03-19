@@ -17,13 +17,12 @@ use libc::{c_uint};
 enum Token {
   Def,
   Extern,
-  Identifier(str),
+  Identifier(String),
   Number(f64),
   Char(char),
   EndOfFile
 }
-
-impl Eq for Token {
+impl PartialEq for Token {
   fn eq(&self, other: &Token) -> bool {
      match (self, other) {
        (&Def, &Def) => true,
@@ -37,6 +36,9 @@ impl Eq for Token {
   }
 }
 
+impl Eq for Token {
+}
+
 trait ExprAst {
   unsafe fn codegen(&self, &mut Parser) -> ValueRef;
 }
@@ -46,34 +48,34 @@ struct NumberExprAst {
 }
 
 struct VariableExprAst {
-  name: &str
+  name: String
 }
 
 struct BinaryExprAst {
   op: Token,
-  lhs: ExprAst,
-  rhs: ExprAst,
+  lhs: Box<ExprAst>,
+  rhs: Box<ExprAst>,
 }
 
 struct CallExprAst {
-  callee: str,
-  args: Vec<ExprAst>
+  callee: String,
+  args: Vec<Box<ExprAst>>
 }
 
 struct PrototypeAst {
-  name: str,
-  argNames: Vec<str>
+  name: String,
+  argNames: Vec<String>
 }
 
 struct FunctionAst {
-  proto: PrototypeAst,
-  body: ExprAst
+  proto: Box<PrototypeAst>,
+  body: Box<ExprAst>
 }
 
 impl ExprAst for NumberExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
-    let ty = llvm::LLVMDoubleTypeInContext(parser.contextRef);
-    return llvm::LLVMConstReal(ty, self.val);
+    let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
+    return llvm::core::LLVMConstReal(ty, self.val);
   }
 }
 
@@ -90,14 +92,14 @@ impl ExprAst for BinaryExprAst {
     let lhsValue = self.lhs.codegen(parser);
     let rhsValue = self.rhs.codegen(parser);
     match self.op {
-      Char('+') => return "addtmp".with_c_str(|name| llvm::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, name)),
-      Char('-') => return "subtmp".with_c_str(|name| llvm::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, name)),
-      Char('*') => return "multmp".with_c_str(|name| llvm::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('+') => return "addtmp".with_c_str(|name| llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('-') => return "subtmp".with_c_str(|name| llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('*') => return "multmp".with_c_str(|name| llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, name)),
       Char('<') => {
 
-        let cmpValue = "cmptmp".with_c_str(|name| llvm::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, name));
-        let ty = llvm::LLVMDoubleTypeInContext(parser.contextRef);
-        return "booltmp".with_c_str(|name| llvm::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, name));
+        let cmpValue = "cmptmp".with_c_str(|name| llvm::core::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, name));
+        let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
+        return "booltmp".with_c_str(|name| llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, name));
       }
       _ => {
         panic!("llvm code gen failed, invalid binary operation");
@@ -110,7 +112,7 @@ impl ExprAst for BinaryExprAst {
 impl ExprAst for CallExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType : TypeRef = parser.getDoubleFunType(self.args.len());
-    let calleeF = self.callee.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+    let calleeF = self.callee.with_c_str(|name| llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
 
     // TODO check arg size
     let mut argsV : Vec<ValueRef> = Vec::new();
@@ -118,25 +120,25 @@ impl ExprAst for CallExprAst {
       argsV.push(arg.codegen(parser));
     }
 
-    return "calltmp".with_c_str(|name| llvm::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, name));
+    return "calltmp".with_c_str(|name| llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, name));
   }
 }
 
 impl PrototypeAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
-    let fun = self.name.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
-    if llvm::LLVMCountBasicBlocks(fun) != 0 {
+    let fun = self.name.with_c_str(|name| llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+    if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
       panic!("Redefinition of function");
     }
-    let nArgs = llvm::LLVMCountParams(fun) as uint;
+    let nArgs = llvm::core::LLVMCountParams(fun) as uint;
     if nArgs != 0 && nArgs != self.argNames.len() {
       panic!("Redefinition of function with different argument count");
     }
 
     for (i, argName) in self.argNames.iter().enumerate() {
-      let llarg = llvm::LLVMGetParam(fun, i as c_uint);
-      argName.with_c_str(|name| llvm::LLVMSetValueName(llarg, name));
+      let llarg = llvm::core::LLVMGetParam(fun, i as c_uint);
+      argName.with_c_str(|name| llvm::core::LLVMSetValueName(llarg, name));
       parser.namedValues.insert(argName.clone(), llarg);
     }
 
@@ -149,16 +151,16 @@ impl FunctionAst {
     parser.namedValues.clear();
 
     let fun = self.proto.codegen(parser);
-    let basicBlock = "entry".with_c_str(|name| llvm::LLVMAppendBasicBlockInContext(parser.contextRef, fun, name));
-    llvm::LLVMPositionBuilderAtEnd(parser.builderRef, basicBlock);
+    let basicBlock = "entry".with_c_str(|name| llvm::core::LLVMAppendBasicBlockInContext(parser.contextRef, fun, name));
+    llvm::core::LLVMPositionBuilderAtEnd(parser.builderRef, basicBlock);
     let body = self.body.codegen(parser);
-    llvm::LLVMBuildRet(parser.builderRef, body);
+    llvm::core::LLVMBuildRet(parser.builderRef, body);
 
-    if llvm::LLVMVerifyFunction(fun, PrintMessageAction as c_uint) != 0 {
+    if llvm::core::LLVMVerifyFunction(fun, PrintMessageAction as c_uint) != 0 {
       println!("Function verify failed");
     }
 
-    llvm::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
+    llvm::core::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
 
     return fun;
   }
@@ -173,15 +175,15 @@ struct Parser {
   contextRef: ContextRef,
   executionEngineRef: ExecutionEngineRef,
   functionPassManagerRef: PassManagerRef,
-  namedValues: HashMap<str, ValueRef>
+  namedValues: HashMap<String, ValueRef>
 }
 
-type ParseResult<T> = Result<T, str>;
+type ParseResult<T> = Result<T, String>;
 
 impl Parser {
   fn new(tokenInput: Receiver<Token>) -> Parser {
     unsafe {
-      if llvm::LLVMRustInitializeNativeTarget() != 0 {
+      if llvm::core::LLVMRustInitializeNativeTarget() != 0 {
         panic!("initializing native target");
       }
     }
@@ -189,31 +191,31 @@ impl Parser {
     let llcx = llvm::core::LLVMContextCreate();
     let llmod = unsafe {
       "kaleidoscope".with_c_str(|name| {
-        llvm::LLVMModuleCreateWithNameInContext(name, llcx)
+        llvm::core::LLVMModuleCreateWithNameInContext(name, llcx)
       })
     };
     let llfpm = unsafe {
-      llvm::LLVMCreateFunctionPassManagerForModule(llmod)
+      llvm::core::LLVMCreateFunctionPassManagerForModule(llmod)
     };
     unsafe {
-      llvm::LLVMAddBasicAliasAnalysisPass(llfpm);
-      llvm::LLVMAddInstructionCombiningPass(llfpm);
-      llvm::LLVMAddReassociatePass(llfpm);
-      llvm::LLVMAddGVNPass(llfpm);
-      llvm::LLVMAddCFGSimplificationPass(llfpm);
+      llvm::core::LLVMAddBasicAliasAnalysisPass(llfpm);
+      llvm::core::LLVMAddInstructionCombiningPass(llfpm);
+      llvm::core::LLVMAddReassociatePass(llfpm);
+      llvm::core::LLVMAddGVNPass(llfpm);
+      llvm::core::LLVMAddCFGSimplificationPass(llfpm);
 
-      llvm::LLVMInitializeFunctionPassManager(llfpm);
+      llvm::core::LLVMInitializeFunctionPassManager(llfpm);
     }
 
     let llbuilder = unsafe {
-      llvm::LLVMCreateBuilderInContext(llcx)
+      llvm::core::LLVMCreateBuilderInContext(llcx)
     };
 
     let llee = unsafe {
       // initialize vars to NULL
       let llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
       let err: *mut char = 0 as *mut char;
-      llvm::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
+      llvm::core::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
       llee
     };
     return Parser {
@@ -229,27 +231,27 @@ impl Parser {
   }
 
   unsafe fn getDoubleFunType(&mut self, argc: uint) -> TypeRef {
-    let ty = llvm::LLVMDoubleTypeInContext(self.contextRef);
+    let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
     let doubles: Vec<TypeRef> = Vec::from_fn(argc, |_| ty);
-    return llvm::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
+    return llvm::core::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
   }
 
   fn getNextToken(&mut self) {
     self.currentToken = self.tokenInput.recv();
   }
 
-  fn parseNumberExpr(&mut self) -> ParseResult<ExprAst> {
+  fn parseNumberExpr(&mut self) -> ParseResult<Box<ExprAst>> {
     let val = match self.currentToken {
       Number(val) => val,
       _ => return Err("token not a number")
     };
 
-    let expr = NumberExprAst{val: val};
+    let expr = Box::new(NumberExprAst{val: val});
     self.getNextToken();
-    return Ok(expr as ExprAst);
+    return Ok(expr);
   }
 
-  fn parseParenExpr(&mut self) -> ParseResult<ExprAst> {
+  fn parseParenExpr(&mut self) -> ParseResult<Box<ExprAst>> {
     self.getNextToken();
     let expr = match self.parseExpression() {
       Ok(expr) => expr,
@@ -264,7 +266,7 @@ impl Parser {
     return Ok(expr);
   }
 
-  fn parseIdentifierExpr(&mut self) -> ParseResult<ExprAst> {
+  fn parseIdentifierExpr(&mut self) -> ParseResult<Box<ExprAst>> {
     let idName = match self.currentToken {
       Identifier(ref name) => name.clone(),
       _ => return Err("token not an identifier")
@@ -304,7 +306,7 @@ impl Parser {
     return Ok(CallExprAst {callee: idName, args: args} as ExprAst);
   }
 
-  fn parsePrimary(&mut self) -> ParseResult<ExprAst> {
+  fn parsePrimary(&mut self) -> ParseResult<Box<ExprAst>> {
     match self.currentToken {
       Identifier(_) => return self.parseIdentifierExpr(),
       Number(_) => return self.parseNumberExpr(),
@@ -313,7 +315,7 @@ impl Parser {
     }
   }
 
-  fn parseExpression(&mut self) -> ParseResult<ExprAst> {
+  fn parseExpression(&mut self) -> ParseResult<Box<ExprAst>> {
     let lhs: ExprAst = match self.parsePrimary() {
       Ok(lhs) => lhs,
       err => return err
@@ -321,7 +323,7 @@ impl Parser {
     return self.parseBinOpRhs(0, lhs);
   }
 
-  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: ExprAst) -> ParseResult<ExprAst> {
+  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: Box<ExprAst>) -> ParseResult<Box<ExprAst>> {
     let mut lhs = startLhs;
     loop {
       let tokenPrec = self.getTokenPrecedence();
@@ -345,12 +347,12 @@ impl Parser {
           err => return err
         };
       }
-      lhs = BinaryExprAst {op: binOp, lhs: lhs, rhs: rhs} as ExprAst;
+      lhs = Box::new(BinaryExprAst {op: binOp, lhs: lhs, rhs: rhs});
     }
   }
 
-  fn parsePrototype(&mut self) -> ParseResult<PrototypeAst> { // possibly need sep. of Prototype and Expr
-    let fnName: str = match self.currentToken {
+  fn parsePrototype(&mut self) -> ParseResult<Box<PrototypeAst>> { // possibly need sep. of Prototype and Expr
+    let fnName: String = match self.currentToken {
       Identifier(ref name) => name.clone(),
       _ => return Err("Expected function name in prototype")
     };
@@ -361,7 +363,7 @@ impl Parser {
       return Err("Expected '(' in prototype");
     }
 
-    let mut argNames: Vec<str> = Vec::new();
+    let mut argNames: Vec<String> = Vec::new();
     loop {
       self.getNextToken();
       match self.currentToken {
@@ -375,7 +377,7 @@ impl Parser {
 
     self.getNextToken();
 
-    return Ok(PrototypeAst {name: fnName, argNames: argNames});
+    return Ok(Box::new(PrototypeAst {name: fnName, argNames: argNames}));
   }
 
   fn parseDefinition(&mut self) -> ParseResult<FunctionAst> {
@@ -402,7 +404,7 @@ impl Parser {
       Err(err) => return Err(err)
     };
 
-    let proto = PrototypeAst {name: "", argNames: Vec::new()};
+    let proto = PrototypeAst {name: "".to_string(), argNames: Vec::new()};
     return Ok(FunctionAst{proto: proto, body: expr});
   }
 
@@ -448,7 +450,7 @@ impl Parser {
         println!("Parsed a function definition");
         unsafe {
           let fun = def.codegen(self);
-          llvm::LLVMDumpValue(fun);
+          llvm::core::LLVMDumpValue(fun);
         }
       }
       Err(why) => {
@@ -465,7 +467,7 @@ impl Parser {
         println!("Parsed an extern");
         unsafe {
           let extLL = ext.codegen(self);
-          llvm::LLVMDumpValue(extLL);
+          llvm::core::LLVMDumpValue(extLL);
         }
       },
       Err(why) => {
@@ -482,13 +484,13 @@ impl Parser {
         println!("Parsed a top level expr");
         unsafe {
           let tleFun = tle.codegen(self);
-          llvm::LLVMDumpValue(tleFun);
+          llvm::core::LLVMDumpValue(tleFun);
           // we have a 0 arg function, call it using the executionEngineRef
           let argsV: Vec<ValueRef> = Vec::new();
           println!("Executing function");
-          let retValue = llvm::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
-          let doubleTy = llvm::LLVMDoubleTypeInContext(self.contextRef);
-          let fl = llvm::LLVMGenericValueToFloat(doubleTy, retValue);
+          let retValue = llvm::core::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
+          let doubleTy = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
+          let fl = llvm::core::LLVMGenericValueToFloat(doubleTy, retValue);
           println!("Returned {}", fl);
         }
       },
@@ -535,11 +537,11 @@ fn readTokens(tokenSender: Sender<Token>) -> fn() {
         }
         let identifier = str::from_chars(identifierStr.as_slice());
         if identifier == "def" {
-          tokenSender.send(Def);
+          tokenSender.send(Token::Def);
         } else if identifier == "extern" {
-          tokenSender.send(Extern);
+          tokenSender.send(Token::Extern);
         } else {
-          tokenSender.send(Identifier(identifier));
+          tokenSender.send(Token::Identifier(identifier));
         }
         continue;
       }
@@ -558,12 +560,12 @@ fn readTokens(tokenSender: Sender<Token>) -> fn() {
               }
             },
             Err(_) => {
-              tokenSender.send(EndOfFile);
+              tokenSender.send(Token::EndOfFile);
               return;
             }
           }
         }
-        tokenSender.send(Number(match from_str::<f64>(str::from_chars(numStr.as_slice())) {
+        tokenSender.send(Token::Number(match from_str::<f64>(str::from_chars(numStr.as_slice())) {
           Some(val) => val,
           None => {
             println!("Malformed number");
@@ -583,7 +585,7 @@ fn readTokens(tokenSender: Sender<Token>) -> fn() {
               }
             },
             Err(_) => {
-              tokenSender.send(EndOfFile);
+              tokenSender.send(Token::EndOfFile);
               return;
             }
           }
@@ -591,7 +593,7 @@ fn readTokens(tokenSender: Sender<Token>) -> fn() {
         continue;
       }
 
-      tokenSender.send(Char(lastChr));
+      tokenSender.send(Token::Char(lastChr));
       // consume lastChr
       lastChr = ' ';
     }
