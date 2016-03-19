@@ -14,8 +14,10 @@ use llvm::LLVMRealPredicate;
 
 use std::char;
 use std::ffi::CString;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, BufReader};
 use std::str;
+use std::sync::mpsc::{self, Sender, Receiver};
+use std::thread;
 use std::vec;
 use libc::{c_uint};
 
@@ -169,6 +171,8 @@ impl FunctionAst {
     let body = self.body.codegen(parser);
     llvm::core::LLVMBuildRet(parser.builderRef, body);
 
+    llvm::core::LLVMDumpModule(parser.moduleRef);
+
     if LLVMVerifyFunction(fun, LLVMVerifierFailureAction::LLVMPrintMessageAction) != 0 {
       println!("Function verify failed");
     }
@@ -181,8 +185,7 @@ impl FunctionAst {
 
 
 struct Parser {
-  tokens: Vec<Token>,
-  tokenIndex: usize,
+  tokenReceiver: Receiver<Token>,
   currentToken: Token,
   moduleRef: LLVMModuleRef,
   builderRef: LLVMBuilderRef,
@@ -195,7 +198,7 @@ struct Parser {
 type ParseResult<T> = Result<T, &'static str>;
 
 impl Parser {
-  fn new(tokens: Vec<Token>) -> Parser {
+  fn new(tokenReceiver: Receiver<Token>) -> Parser {
     unsafe {
       if llvm::target::LLVM_InitializeNativeTarget() != 0 {
         panic!("initializing native target");
@@ -233,8 +236,7 @@ impl Parser {
       llee
     };
     return Parser {
-      tokens: tokens,
-      tokenIndex: 0,
+      tokenReceiver: tokenReceiver,
       currentToken: Token::Char(' '),
       moduleRef: llmod,
       builderRef: llbuilder,
@@ -252,8 +254,7 @@ impl Parser {
   }
 
   fn getNextToken(&mut self) {
-    self.currentToken = self.tokens[self.tokenIndex].clone();
-    self.tokenIndex += 1;
+    self.currentToken = self.tokenReceiver.recv().unwrap();
   }
 
   fn parseNumberExpr(&mut self) -> ParseResult<Box<ExprAst>> {
@@ -518,22 +519,28 @@ impl Parser {
   }
 }
 
-fn readTokens() -> Vec<Token> {
-  let mut tokens = Vec::new();
-  let mut buffer = String::new();
-  match io::stdin().read_to_string(&mut buffer) {
-      Ok(_) => {}
-      Err(_) => return tokens
-  }
+fn readChars(charSender: Sender<char>) {
+  let mut stdin = io::stdin();
+  let mut stdin_lock = stdin.lock();
+  let mut reader = BufReader::new(stdin_lock);
 
-  let mut chars = buffer.chars();
+  let mut buf = [0];
+  loop {
+    match reader.read(&mut buf) {
+      Ok(_) => charSender.send(buf[0] as char).unwrap(), // No utf8 support for now
+      Err(_) => return
+    }
+  }
+}
+
+fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
   let mut lastChr = ' ';
 
   loop {
     while lastChr == ' ' || lastChr == '\r' || lastChr == '\n' || lastChr == '\t' {
-      lastChr = match chars.next() {
-        Some(chr) => chr,
-        None => break
+      lastChr = match chars.recv() {
+        Ok(chr) => chr,
+        Err(_) => break
       };
     }
 
@@ -542,8 +549,8 @@ fn readTokens() -> Vec<Token> {
       identifier.push(lastChr);
 
       loop {
-        match chars.next() {
-          Some(chr) => {
+        match chars.recv() {
+          Ok(chr) => {
             if chr.is_alphabetic() {
               identifier.push(chr);
             } else {
@@ -551,18 +558,18 @@ fn readTokens() -> Vec<Token> {
               break;
             }
           },
-          None => {
-            tokens.push(Token::EndOfFile);
-            return tokens;
+          Err(_) => {
+            tokenSender.send(Token::EndOfFile);
+            return;
           }
         }
       }
       if identifier == "def" {
-        tokens.push(Token::Def);
+        tokenSender.send(Token::Def);
       } else if identifier == "extern" {
-        tokens.push(Token::Extern);
+        tokenSender.send(Token::Extern);
       } else {
-        tokens.push(Token::Identifier(identifier));
+        tokenSender.send(Token::Identifier(identifier));
       }
       continue;
     }
@@ -571,8 +578,8 @@ fn readTokens() -> Vec<Token> {
       let mut numStr = String::new();
       numStr.push(lastChr);
       loop {
-        match chars.next() {
-          Some(chr) => {
+        match chars.recv() {
+          Ok(chr) => {
             if char::is_digit(chr, 10) || chr == '.' {
               numStr.push(chr);
             } else {
@@ -580,13 +587,13 @@ fn readTokens() -> Vec<Token> {
               break;
             }
           },
-          None => {
-            tokens.push(Token::EndOfFile);
-            return tokens;
+          Err(_) => {
+            tokenSender.send(Token::EndOfFile);
+            return;
           }
         }
       }
-      tokens.push(Token::Number(match f64::from_str(&numStr) {
+      tokenSender.send(Token::Number(match f64::from_str(&numStr) {
         Ok(val) => val,
         Err(_) => {
           println!("Malformed number");
@@ -598,32 +605,37 @@ fn readTokens() -> Vec<Token> {
 
     if lastChr == '#' {
       loop {
-        match chars.next() {
-          Some(chr) => {
+        match chars.recv() {
+          Ok(chr) => {
             if chr == '\r' || chr == '\n' {
               lastChr = ' ';
               break;
             }
           },
-          None => {
-            tokens.push(Token::EndOfFile);
-            return tokens;
+          Err(_) => {
+            tokenSender.send(Token::EndOfFile);
+            return;
           }
         }
       }
       continue;
     }
 
-    tokens.push(Token::Char(lastChr));
+    tokenSender.send(Token::Char(lastChr));
     // consume lastChr
     lastChr = ' ';
   }
-
-  return tokens;
 }
 
 fn main() {
-  let tokens = readTokens();
-  let mut parser = Parser::new(tokens);
+  let (charSender, charReceiver) = mpsc::channel();
+  let (tokenSender, tokenReceiver) = mpsc::channel();
+  thread::spawn(|| {
+    readChars(charSender);
+  });
+  thread::spawn(|| {
+    readTokens(charReceiver, tokenSender);
+  });
+  let mut parser = Parser::new(tokenReceiver);
   parser.run();
 }
