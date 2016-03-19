@@ -178,7 +178,7 @@ struct Parser {
   namedValues: HashMap<String, ValueRef>
 }
 
-type ParseResult<T> = Result<T, String>;
+type ParseResult<T> = Result<T, &'static str>;
 
 impl Parser {
   fn new(tokenInput: Receiver<Token>) -> Parser {
