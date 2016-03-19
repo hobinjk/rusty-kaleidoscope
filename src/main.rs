@@ -334,7 +334,7 @@ impl Parser {
     return self.parseBinOpRhs(0, lhs);
   }
 
-  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: Box<ExprAst>) -> ParseResult<Box<ExprAst>> {
+  fn parseBinOpRhs(&mut self, exprPrec: i32, startLhs: Box<ExprAst>) -> ParseResult<Box<ExprAst>> {
     let mut lhs = startLhs;
     loop {
       let tokenPrec = self.getTokenPrecedence();
@@ -419,7 +419,7 @@ impl Parser {
     return Ok(Box::new(FunctionAst{proto: proto, body: expr}));
   }
 
-  fn getTokenPrecedence(&mut self) -> int {
+  fn getTokenPrecedence(&mut self) -> i32 {
     match self.currentToken {
       Token::Char(t) => match t {
         '<' => return 10,
