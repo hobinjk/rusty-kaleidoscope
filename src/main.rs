@@ -7,6 +7,7 @@ use std::collections::HashMap;
 // use lib::llvm::llvm;
 
 use std::char;
+use std::ffi;
 use std::io::{self, Read};
 use std::str;
 use std::vec;
@@ -71,6 +72,10 @@ struct FunctionAst {
   body: Box<ExprAst>
 }
 
+fn cstr<'a>(input: &'a str) -> &'a CString {
+    return CString::new(input).unwrap()
+}
+
 impl ExprAst for NumberExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
@@ -86,19 +91,22 @@ impl ExprAst for VariableExprAst {
     };
   }
 }
+
 impl ExprAst for BinaryExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let lhsValue = self.lhs.codegen(parser);
     let rhsValue = self.rhs.codegen(parser);
     match self.op {
-      Char('+') => return "addtmp".with_c_str(|name| llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, name)),
-      Char('-') => return "subtmp".with_c_str(|name| llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, name)),
-      Char('*') => return "multmp".with_c_str(|name| llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, name)),
+      Char('+') =>
+        return llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, cstr("addtmp").as_ptr()),
+      Char('-') =>
+        return llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, cstr("subtmp").as_ptr()),
+      Char('*') =>
+        return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, cstr("multmp").as_ptr()),
       Char('<') => {
-
-        let cmpValue = "cmptmp".with_c_str(|name| llvm::core::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, name));
+        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
         let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
-        return "booltmp".with_c_str(|name| llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, name));
+        return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, cstr("booltmp").as_ptr());
       }
       _ => {
         panic!("llvm code gen failed, invalid binary operation");
@@ -111,7 +119,7 @@ impl ExprAst for BinaryExprAst {
 impl ExprAst for CallExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType : TypeRef = parser.getDoubleFunType(self.args.len());
-    let calleeF = self.callee.with_c_str(|name| llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+    let calleeF = llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, cstr(self.callee).as_ptr(), funType);
 
     // TODO check arg size
     let mut argsV : Vec<ValueRef> = Vec::new();
@@ -119,14 +127,14 @@ impl ExprAst for CallExprAst {
       argsV.push(arg.codegen(parser));
     }
 
-    return "calltmp".with_c_str(|name| llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, name));
+    return llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, cstr("calltmp").as_ptr());
   }
 }
 
 impl PrototypeAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
-    let fun = self.name.with_c_str(|name| llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
+    let fun = llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, cstr(self.name).as_ptr(), funType);
     if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
       panic!("Redefinition of function");
     }
@@ -137,7 +145,7 @@ impl PrototypeAst {
 
     for (i, argName) in self.argNames.iter().enumerate() {
       let llarg = llvm::core::LLVMGetParam(fun, i as c_uint);
-      argName.with_c_str(|name| llvm::core::LLVMSetValueName(llarg, name));
+      llvm::core::LLVMSetValueName(llarg, cstr(argName).as_ptr());
       parser.namedValues.insert(argName.clone(), llarg);
     }
 
@@ -150,7 +158,7 @@ impl FunctionAst {
     parser.namedValues.clear();
 
     let fun = self.proto.codegen(parser);
-    let basicBlock = "entry".with_c_str(|name| llvm::core::LLVMAppendBasicBlockInContext(parser.contextRef, fun, name));
+    let basicBlock = llvm::core::LLVMAppendBasicBlockInContext(parser.contextRef, fun, cstr("entry").as_ptr());
     llvm::core::LLVMPositionBuilderAtEnd(parser.builderRef, basicBlock);
     let body = self.body.codegen(parser);
     llvm::core::LLVMBuildRet(parser.builderRef, body);
@@ -189,9 +197,7 @@ impl Parser {
 
     let llcx = llvm::core::LLVMContextCreate();
     let llmod = unsafe {
-      "kaleidoscope".with_c_str(|name| {
-        llvm::core::LLVMModuleCreateWithNameInContext(name, llcx)
-      })
+      llvm::core::LLVMModuleCreateWithNameInContext(cstr("kaleidoscope").as_ptr(), llcx)
     };
     let llfpm = unsafe {
       llvm::core::LLVMCreateFunctionPassManagerForModule(llmod)
