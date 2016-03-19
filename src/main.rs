@@ -546,13 +546,13 @@ fn readTokens(tokenSender: Sender<Token>) -> fn() {
         continue;
       }
 
-      if char::is_digit(lastChr) || lastChr == '.' { // number: [0-9.]+
+      if char::is_digit(lastChr, 10) || lastChr == '.' { // number: [0-9.]+
         let mut numStr: Vec<char> = Vec::new();
         numStr.push(lastChr);
         loop {
           match reader.read_char() {
             Ok(chr) => {
-              if char::is_digit(chr) || chr == '.' {
+              if char::is_digit(chr, 10) || chr == '.' {
                 numStr.push(chr);
               } else {
                 lastChr = chr;
