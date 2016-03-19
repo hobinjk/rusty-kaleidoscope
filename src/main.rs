@@ -7,13 +7,12 @@ use std::collections::HashMap;
 // use lib::llvm::llvm;
 
 use std::char;
-use std::io;
-use std::io::stdio;
+use std::io::{self, Read};
 use std::str;
 use std::vec;
 use libc::{c_uint};
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 enum Token {
   Def,
   Extern,
@@ -168,7 +167,7 @@ impl FunctionAst {
 
 
 struct Parser {
-  tokenInput: Receiver<Token>,
+  tokenInput: Iter<Token>,
   currentToken: Token,
   moduleRef: ModuleRef,
   builderRef: BuilderRef,
@@ -181,7 +180,7 @@ struct Parser {
 type ParseResult<T> = Result<T, &'static str>;
 
 impl Parser {
-  fn new(tokenInput: Receiver<Token>) -> Parser {
+  fn new(tokens: Iter<Token>) -> Parser {
     unsafe {
       if llvm::core::LLVMRustInitializeNativeTarget() != 0 {
         panic!("initializing native target");
@@ -502,108 +501,112 @@ impl Parser {
   }
 }
 
-fn readTokens(tokenSender: Sender<Token>) -> fn() {
-  return || {
-    let mut reader = io::stdin();
-    let mut lastChr = ' ';
+fn readTokens() -> Vec<Token> {
+  let mut tokens = Vec::new();
+  let mut buffer = String::new();
+  match io::stdin().read_to_string(&mut buffer) {
+      Ok(_) => {}
+      Err(_) => return tokens
+  }
 
-    loop {
-      while lastChr == ' ' || lastChr == '\r' || lastChr == '\n' || lastChr == '\t' {
-        lastChr = match reader.read_char() {
-          Ok(chr) => chr,
-          Err(_) => break
-        };
-      }
+  let mut chars = buffer.chars();
+  let mut lastChr = ' ';
 
-      if char::is_alphabetic(lastChr) { // identifier [a-zA-Z][a-zA-Z0-9]*
-        let mut identifierStr: Vec<char> = Vec::new();
-        identifierStr.push(lastChr);
-
-        loop {
-          match reader.read_char() {
-            Ok(chr) => {
-              if char::is_alphabetic(chr) {
-                identifierStr.push(chr);
-              } else {
-                lastChr = chr;
-                break;
-              }
-            },
-            Err(_) => {
-              tokenSender.send(EndOfFile);
-              return;
-            }
-          }
-        }
-        let identifier = str::from_chars(identifierStr.as_slice());
-        if identifier == "def" {
-          tokenSender.send(Token::Def);
-        } else if identifier == "extern" {
-          tokenSender.send(Token::Extern);
-        } else {
-          tokenSender.send(Token::Identifier(identifier));
-        }
-        continue;
-      }
-
-      if char::is_digit(lastChr, 10) || lastChr == '.' { // number: [0-9.]+
-        let mut numStr: Vec<char> = Vec::new();
-        numStr.push(lastChr);
-        loop {
-          match reader.read_char() {
-            Ok(chr) => {
-              if char::is_digit(chr, 10) || chr == '.' {
-                numStr.push(chr);
-              } else {
-                lastChr = chr;
-                break;
-              }
-            },
-            Err(_) => {
-              tokenSender.send(Token::EndOfFile);
-              return;
-            }
-          }
-        }
-        tokenSender.send(Token::Number(match from_str::<f64>(str::from_chars(numStr.as_slice())) {
-          Some(val) => val,
-          None => {
-            println!("Malformed number");
-            continue;
-          }
-        }));
-        continue;
-      }
-
-      if lastChr == '#' {
-        loop {
-          match reader.read_char() {
-            Ok(chr) => {
-              if chr == '\r' || chr == '\n' {
-                lastChr = ' ';
-                break;
-              }
-            },
-            Err(_) => {
-              tokenSender.send(Token::EndOfFile);
-              return;
-            }
-          }
-        }
-        continue;
-      }
-
-      tokenSender.send(Token::Char(lastChr));
-      // consume lastChr
-      lastChr = ' ';
+  loop {
+    while lastChr == ' ' || lastChr == '\r' || lastChr == '\n' || lastChr == '\t' {
+      lastChr = match chars.next() {
+        Some(chr) => chr,
+        None => break
+      };
     }
-  };
+
+    if lastChr.is_alphabetic() { // identifier [a-zA-Z][a-zA-Z0-9]*
+      let mut identifier = String::new();
+      identifier.push(lastChr);
+
+      loop {
+        match chars.next() {
+          Some(chr) => {
+            if chr.is_alphabetic() {
+              identifier.push(chr);
+            } else {
+              lastChr = chr;
+              break;
+            }
+          },
+          None => {
+            tokens.push(Token::EndOfFile);
+            return tokens;
+          }
+        }
+      }
+      if identifier == "def" {
+        tokens.push(Token::Def);
+      } else if identifier == "extern" {
+        tokens.push(Token::Extern);
+      } else {
+        tokens.push(Token::Identifier(identifier));
+      }
+      continue;
+    }
+
+    if char::is_digit(lastChr, 10) || lastChr == '.' { // number: [0-9.]+
+      let mut numStr = String::new();
+      numStr.push(lastChr);
+      loop {
+        match chars.next() {
+          Some(chr) => {
+            if char::is_digit(chr, 10) || chr == '.' {
+              numStr.push(chr);
+            } else {
+              lastChr = chr;
+              break;
+            }
+          },
+          None => {
+            tokens.push(Token::EndOfFile);
+            return tokens;
+          }
+        }
+      }
+      tokens.push(Token::Number(match from_str::<f64>(&numStr) {
+        Some(val) => val,
+        None => {
+          println!("Malformed number");
+          continue;
+        }
+      }));
+      continue;
+    }
+
+    if lastChr == '#' {
+      loop {
+        match reader.read_char() {
+          Ok(chr) => {
+            if chr == '\r' || chr == '\n' {
+              lastChr = ' ';
+              break;
+            }
+          },
+          Err(_) => {
+            tokens.push(Token::EndOfFile);
+            return tokens;
+          }
+        }
+      }
+      continue;
+    }
+
+    tokens.push(Token::Char(lastChr));
+    // consume lastChr
+    lastChr = ' ';
+  }
+
+  return tokens;
 }
 
 fn main() {
-  let (tokenSender, tokenReceiver) = channel();
-
-  spawn(readTokens(tokenSender));
-  let mut parser = Parser::new(tokenReceiver);
+  let tokens = readTokens();
+  let mut parser = Parser::new(tokens.iter());
   parser.run();
 }
