@@ -31,12 +31,12 @@ enum Token {
 impl PartialEq for Token {
   fn eq(&self, other: &Token) -> bool {
      match (self, other) {
-       (&Def, &Def) => true,
-       (&Extern, &Extern) => true,
-       (&Identifier(ref val), &Identifier(ref oVal)) => val == oVal,
-       (&Number(val), &Number(oVal)) => val == oVal,
-       (&Char(val), &Char(oVal)) => val == oVal,
-       (&EndOfFile, &EndOfFile) => true,
+       (&Token::Def, &Token::Def) => true,
+       (&Token::Extern, &Token::Extern) => true,
+       (&Token::Identifier(ref val), &Token::Identifier(ref oVal)) => val == oVal,
+       (&Token::Number(val), &Token::Number(oVal)) => val == oVal,
+       (&Token::Char(val), &Token::Char(oVal)) => val == oVal,
+       (&Token::EndOfFile, &Token::EndOfFile) => true,
        (_, _) => false,
      }
   }
