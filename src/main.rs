@@ -1,5 +1,8 @@
+extern crate core;
 extern crate libc;
 extern crate llvm_sys as llvm;
+
+use core::str::FromStr;
 
 use std::collections::HashMap;
 
@@ -238,7 +241,7 @@ impl Parser {
     };
   }
 
-  unsafe fn getDoubleFunType(&mut self, argc: uint) -> LLVMTypeRef {
+  unsafe fn getDoubleFunType(&mut self, argc: usize) -> LLVMTypeRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
     let doubles: Vec<LLVMTypeRef> = (0..argc).map(|_| ty).collect();
     return llvm::core::LLVMFunctionType(ty, doubles.as_mut_ptr(), argc as c_uint, 0);
@@ -578,9 +581,9 @@ fn readTokens() -> Vec<Token> {
           }
         }
       }
-      tokens.push(Token::Number(match from_str::<f64>(&numStr) {
-        Some(val) => val,
-        None => {
+      tokens.push(Token::Number(match f64::from_str(&numStr) {
+        Ok(val) => val,
+        Err(_) => {
           println!("Malformed number");
           continue;
         }
