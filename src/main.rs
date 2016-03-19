@@ -237,7 +237,7 @@ impl Parser {
 
   unsafe fn getDoubleFunType(&mut self, argc: uint) -> TypeRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
-    let doubles: Vec<TypeRef> = Vec::from_fn(argc, |_| ty);
+    let doubles: Vec<TypeRef> = (0..argc).map(|_| ty).collect();
     return llvm::core::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
   }
 
