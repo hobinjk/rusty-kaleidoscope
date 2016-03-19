@@ -1,27 +1,23 @@
-extern crate collections;
+extern crate libc;
+extern crate llvm_sys as llvm;
 
-use collections::HashMap;
+use std::collections::HashMap;
 
-use lib::llvm::{BuilderRef, ContextRef, ExecutionEngineRef, False, ModuleRef, PassManagerRef, RealULT, TypeRef, ValueRef, PrintMessageAction};
-use lib::llvm::llvm;
+// use lib::llvm::{BuilderRef, ContextRef, ExecutionEngineRef, False, ModuleRef, PassManagerRef, RealULT, TypeRef, ValueRef, PrintMessageAction};
+// use lib::llvm::llvm;
 
 use std::char;
 use std::io;
 use std::io::stdio;
 use std::str;
-use std::vec_ng::Vec;
-use std::libc::{c_uint};
+use std::vec;
+use libc::{c_uint};
 
-pub mod lib {
-  pub mod llvm;
-  pub mod llvmdeps;
-}
-
-#[deriving(Clone)]
+#[derive(Clone)]
 enum Token {
   Def,
   Extern,
-  Identifier(~str),
+  Identifier(str),
   Number(f64),
   Char(char),
   EndOfFile
@@ -50,28 +46,28 @@ struct NumberExprAst {
 }
 
 struct VariableExprAst {
-  name: ~str
+  name: &str
 }
 
 struct BinaryExprAst {
   op: Token,
-  lhs: ~ExprAst,
-  rhs: ~ExprAst,
+  lhs: ExprAst,
+  rhs: ExprAst,
 }
 
 struct CallExprAst {
-  callee: ~str,
-  args: Vec<~ExprAst>
+  callee: str,
+  args: Vec<ExprAst>
 }
 
 struct PrototypeAst {
-  name: ~str,
-  argNames: Vec<~str>
+  name: str,
+  argNames: Vec<str>
 }
 
 struct FunctionAst {
-  proto: ~PrototypeAst,
-  body: ~ExprAst
+  proto: PrototypeAst,
+  body: ExprAst
 }
 
 impl ExprAst for NumberExprAst {
@@ -85,7 +81,7 @@ impl ExprAst for VariableExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     return match parser.namedValues.find_copy(&self.name) {
       Some(v) => v,
-      None => fail!("Unknown variable name {}", self.name)
+      None => panic!("Unknown variable name {}", self.name)
     };
   }
 }
@@ -104,7 +100,7 @@ impl ExprAst for BinaryExprAst {
         return "booltmp".with_c_str(|name| llvm::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, name));
       }
       _ => {
-        fail!("llvm code gen failed, invalid binary operation");
+        panic!("llvm code gen failed, invalid binary operation");
       }
     }
 
@@ -131,11 +127,11 @@ impl PrototypeAst {
     let funType = parser.getDoubleFunType(self.argNames.len());
     let fun = self.name.with_c_str(|name| llvm::LLVMGetOrInsertFunction(parser.moduleRef, name, funType));
     if llvm::LLVMCountBasicBlocks(fun) != 0 {
-      fail!("Redefinition of function");
+      panic!("Redefinition of function");
     }
     let nArgs = llvm::LLVMCountParams(fun) as uint;
     if nArgs != 0 && nArgs != self.argNames.len() {
-      fail!("Redefinition of function with different argument count");
+      panic!("Redefinition of function with different argument count");
     }
 
     for (i, argName) in self.argNames.iter().enumerate() {
@@ -177,20 +173,20 @@ struct Parser {
   contextRef: ContextRef,
   executionEngineRef: ExecutionEngineRef,
   functionPassManagerRef: PassManagerRef,
-  namedValues: HashMap<~str, ValueRef>
+  namedValues: HashMap<str, ValueRef>
 }
 
-type ParseResult<T> = Result<T, ~str>;
+type ParseResult<T> = Result<T, str>;
 
 impl Parser {
   fn new(tokenInput: Receiver<Token>) -> Parser {
     unsafe {
       if llvm::LLVMRustInitializeNativeTarget() != 0 {
-        fail!("initializing native target");
+        panic!("initializing native target");
       }
     }
 
-    let llcx = unsafe { llvm::LLVMContextCreate() };
+    let llcx = llvm::core::LLVMContextCreate();
     let llmod = unsafe {
       "kaleidoscope".with_c_str(|name| {
         llvm::LLVMModuleCreateWithNameInContext(name, llcx)
@@ -216,7 +212,7 @@ impl Parser {
     let llee = unsafe {
       // initialize vars to NULL
       let llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
-      let err: *char = 0 as *char;
+      let err: *mut char = 0 as *mut char;
       llvm::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
       llee
     };
@@ -242,18 +238,18 @@ impl Parser {
     self.currentToken = self.tokenInput.recv();
   }
 
-  fn parseNumberExpr(&mut self) -> ParseResult<~ExprAst> {
+  fn parseNumberExpr(&mut self) -> ParseResult<ExprAst> {
     let val = match self.currentToken {
       Number(val) => val,
-      _ => return Err(~"token not a number")
+      _ => return Err("token not a number")
     };
 
-    let expr = ~NumberExprAst{val: val};
+    let expr = NumberExprAst{val: val};
     self.getNextToken();
-    return Ok(expr as ~ExprAst);
+    return Ok(expr as ExprAst);
   }
 
-  fn parseParenExpr(&mut self) -> ParseResult<~ExprAst> {
+  fn parseParenExpr(&mut self) -> ParseResult<ExprAst> {
     self.getNextToken();
     let expr = match self.parseExpression() {
       Ok(expr) => expr,
@@ -262,27 +258,27 @@ impl Parser {
 
     match self.currentToken {
       Char(')') => {},
-      _ => return Err(~"expected ')'")
+      _ => return Err("expected ')'")
     }
     self.getNextToken();
     return Ok(expr);
   }
 
-  fn parseIdentifierExpr(&mut self) -> ParseResult<~ExprAst> {
+  fn parseIdentifierExpr(&mut self) -> ParseResult<ExprAst> {
     let idName = match self.currentToken {
       Identifier(ref name) => name.clone(),
-      _ => return Err(~"token not an identifier")
+      _ => return Err("token not an identifier")
     };
 
     self.getNextToken();
 
     match self.currentToken {
       Char('(') => {},
-      _ => return Ok(~VariableExprAst{name: idName} as ~ExprAst)
+      _ => return Ok(VariableExprAst{name: idName} as ExprAst)
     }
 
     self.getNextToken();
-    let mut args: Vec<~ExprAst> = Vec::new();
+    let mut args: Vec<ExprAst> = Vec::new();
     if self.currentToken != Char(')') {
       loop {
         let arg = self.parseExpression();
@@ -296,7 +292,7 @@ impl Parser {
         }
 
         if self.currentToken != Char(',') {
-          return Err(~"Expected ')' or ',' in argument list");
+          return Err("Expected ')' or ',' in argument list");
         }
 
         self.getNextToken();
@@ -305,27 +301,27 @@ impl Parser {
 
     self.getNextToken();
 
-    return Ok(~CallExprAst {callee: idName, args: args} as ~ExprAst);
+    return Ok(CallExprAst {callee: idName, args: args} as ExprAst);
   }
 
-  fn parsePrimary(&mut self) -> ParseResult<~ExprAst> {
+  fn parsePrimary(&mut self) -> ParseResult<ExprAst> {
     match self.currentToken {
       Identifier(_) => return self.parseIdentifierExpr(),
       Number(_) => return self.parseNumberExpr(),
       Char('(') => return self.parseParenExpr(),
-      _ => return Err(~"unknown token when expecting an expression")
+      _ => return Err("unknown token when expecting an expression")
     }
   }
 
-  fn parseExpression(&mut self) -> ParseResult<~ExprAst> {
-    let lhs: ~ExprAst = match self.parsePrimary() {
+  fn parseExpression(&mut self) -> ParseResult<ExprAst> {
+    let lhs: ExprAst = match self.parsePrimary() {
       Ok(lhs) => lhs,
       err => return err
     };
     return self.parseBinOpRhs(0, lhs);
   }
 
-  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: ~ExprAst) -> ParseResult<~ExprAst> {
+  fn parseBinOpRhs(&mut self, exprPrec: int, startLhs: ExprAst) -> ParseResult<ExprAst> {
     let mut lhs = startLhs;
     loop {
       let tokenPrec = self.getTokenPrecedence();
@@ -349,23 +345,23 @@ impl Parser {
           err => return err
         };
       }
-      lhs = ~BinaryExprAst {op: binOp, lhs: lhs, rhs: rhs} as ~ExprAst;
+      lhs = BinaryExprAst {op: binOp, lhs: lhs, rhs: rhs} as ExprAst;
     }
   }
 
-  fn parsePrototype(&mut self) -> ParseResult<~PrototypeAst> { // possibly need sep. of Prototype and Expr
-    let fnName: ~str = match self.currentToken {
+  fn parsePrototype(&mut self) -> ParseResult<PrototypeAst> { // possibly need sep. of Prototype and Expr
+    let fnName: str = match self.currentToken {
       Identifier(ref name) => name.clone(),
-      _ => return Err(~"Expected function name in prototype")
+      _ => return Err("Expected function name in prototype")
     };
 
     self.getNextToken();
     if self.currentToken != Char('(') {
       println!("had a {:?}", self.currentToken);
-      return Err(~"Expected '(' in prototype");
+      return Err("Expected '(' in prototype");
     }
 
-    let mut argNames: Vec<~str> = Vec::new();
+    let mut argNames: Vec<str> = Vec::new();
     loop {
       self.getNextToken();
       match self.currentToken {
@@ -374,15 +370,15 @@ impl Parser {
       }
     }
     if self.currentToken != Char(')') {
-      return Err(~"Expected ')' in prototype");
+      return Err("Expected ')' in prototype");
     }
 
     self.getNextToken();
 
-    return Ok(~PrototypeAst {name: fnName, argNames: argNames});
+    return Ok(PrototypeAst {name: fnName, argNames: argNames});
   }
 
-  fn parseDefinition(&mut self) -> ParseResult<~FunctionAst> {
+  fn parseDefinition(&mut self) -> ParseResult<FunctionAst> {
     self.getNextToken();
     let proto = match self.parsePrototype() {
       Ok(proto) => proto,
@@ -392,22 +388,22 @@ impl Parser {
       Ok(expr) => expr,
       Err(err) => return Err(err)
     };
-    return Ok(~FunctionAst{proto: proto, body: expr});
+    return Ok(FunctionAst{proto: proto, body: expr});
   }
 
-  fn parseExtern(&mut self) -> ParseResult<~PrototypeAst> {
+  fn parseExtern(&mut self) -> ParseResult<PrototypeAst> {
     self.getNextToken(); // consume "expr"
     return self.parsePrototype();
   }
 
-  fn parseTopLevelExpr(&mut self) -> ParseResult<~FunctionAst> {
+  fn parseTopLevelExpr(&mut self) -> ParseResult<FunctionAst> {
     let expr = match self.parseExpression() {
       Ok(expr) => expr,
       Err(err) => return Err(err)
     };
 
-    let proto = ~PrototypeAst {name: ~"", argNames: Vec::new()};
-    return Ok(~FunctionAst{proto: proto, body: expr});
+    let proto = PrototypeAst {name: "", argNames: Vec::new()};
+    return Ok(FunctionAst{proto: proto, body: expr});
   }
 
   fn getTokenPrecedence(&mut self) -> int {
@@ -504,8 +500,8 @@ impl Parser {
   }
 }
 
-fn readTokens(tokenSender: Sender<Token>) -> proc() {
-  return proc() {
+fn readTokens(tokenSender: Sender<Token>) -> fn() {
+  return || {
     let mut reader = io::stdin();
     let mut lastChr = ' ';
 
@@ -538,9 +534,9 @@ fn readTokens(tokenSender: Sender<Token>) -> proc() {
           }
         }
         let identifier = str::from_chars(identifierStr.as_slice());
-        if identifier == ~"def" {
+        if identifier == "def" {
           tokenSender.send(Def);
-        } else if identifier == ~"extern" {
+        } else if identifier == "extern" {
           tokenSender.send(Extern);
         } else {
           tokenSender.send(Identifier(identifier));
