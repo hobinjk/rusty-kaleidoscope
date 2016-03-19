@@ -97,13 +97,13 @@ impl ExprAst for BinaryExprAst {
     let lhsValue = self.lhs.codegen(parser);
     let rhsValue = self.rhs.codegen(parser);
     match self.op {
-      Char('+') =>
+      Token::Char('+') =>
         return llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, cstr("addtmp").as_ptr()),
-      Char('-') =>
+      Token::Char('-') =>
         return llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, cstr("subtmp").as_ptr()),
-      Char('*') =>
+      Token::Char('*') =>
         return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, cstr("multmp").as_ptr()),
-      Char('<') => {
+      Token::Char('<') => {
         let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
         let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
         return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, cstr("booltmp").as_ptr());
