@@ -119,7 +119,7 @@ impl ExprAst for BinaryExprAst {
 impl ExprAst for CallExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType : TypeRef = parser.getDoubleFunType(self.args.len());
-    let calleeF = llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, cstr(self.callee).as_ptr(), funType);
+    let calleeF = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.callee).as_ptr(), funType);
 
     // TODO check arg size
     let mut argsV : Vec<ValueRef> = Vec::new();
@@ -134,7 +134,7 @@ impl ExprAst for CallExprAst {
 impl PrototypeAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
-    let fun = llvm::core::LLVMGetOrInsertFunction(parser.moduleRef, cstr(self.name).as_ptr(), funType);
+    let fun = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.name).as_ptr(), funType);
     if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
       panic!("Redefinition of function");
     }
