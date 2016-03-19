@@ -9,7 +9,7 @@ use std::collections::HashMap;
 // use lib::llvm::llvm;
 use llvm::prelude::{LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMPassManagerRef, LLVMTypeRef, LLVMValueRef};
 use llvm::execution_engine::{LLVMExecutionEngineRef, LLVMGenericValueToFloat, LLVMRunFunction, LLVMGenericValueRef};
-use llvm::analysis::LLVMVerifyFunction;
+use llvm::analysis::{LLVMVerifyFunction, LLVMVerifierFailureAction};
 use llvm::LLVMRealPredicate;
 
 use std::char;
@@ -110,7 +110,7 @@ impl ExprAst for BinaryExprAst {
       Token::Char('*') =>
         return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, cstr("multmp").as_ptr()),
       Token::Char('<') => {
-        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, LLVMRealULT, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
+        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, LLVMRealPredicate::LLVMRealULT, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
         let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
         return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, cstr("booltmp").as_ptr());
       }
@@ -169,7 +169,7 @@ impl FunctionAst {
     let body = self.body.codegen(parser);
     llvm::core::LLVMBuildRet(parser.builderRef, body);
 
-    if llvm::core::LLVMVerifyFunction(fun, LLVMPrintMessageAction) != 0 {
+    if LLVMVerifyFunction(fun, LLVMVerifierFailureAction::LLVMPrintMessageAction) != 0 {
       println!("Function verify failed");
     }
 
@@ -197,12 +197,14 @@ type ParseResult<T> = Result<T, &'static str>;
 impl Parser {
   fn new(tokens: Vec<Token>) -> Parser {
     unsafe {
-      if llvm::core::LLVMRustInitializeNativeTarget() != 0 {
+      if llvm::target::LLVM_InitializeNativeTarget() != 0 {
         panic!("initializing native target");
       }
     }
 
-    let llcx = llvm::core::LLVMContextCreate();
+    let llcx = unsafe {
+        llvm::core::LLVMContextCreate();
+    };
     let llmod = unsafe {
       llvm::core::LLVMModuleCreateWithNameInContext(cstr("kaleidoscope").as_ptr(), llcx)
     };
@@ -210,11 +212,11 @@ impl Parser {
       llvm::core::LLVMCreateFunctionPassManagerForModule(llmod)
     };
     unsafe {
-      llvm::core::LLVMAddBasicAliasAnalysisPass(llfpm);
-      llvm::core::LLVMAddInstructionCombiningPass(llfpm);
-      llvm::core::LLVMAddReassociatePass(llfpm);
-      llvm::core::LLVMAddGVNPass(llfpm);
-      llvm::core::LLVMAddCFGSimplificationPass(llfpm);
+      llvm::transforms::scalar::LLVMAddBasicAliasAnalysisPass(llfpm);
+      llvm::transforms::scalar::LLVMAddInstructionCombiningPass(llfpm);
+      llvm::transforms::scalar::LLVMAddReassociatePass(llfpm);
+      llvm::transforms::scalar::LLVMAddGVNPass(llfpm);
+      llvm::transforms::scalar::LLVMAddCFGSimplificationPass(llfpm);
 
       llvm::core::LLVMInitializeFunctionPassManager(llfpm);
     }
@@ -226,8 +228,8 @@ impl Parser {
     let llee = unsafe {
       // initialize vars to NULL
       let llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
-      let err: *mut char = 0 as *mut char;
-      llvm::core::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
+      let err: *mut i8 = 0 as *mut i8;
+      llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut llee, llmod, &mut err);
       llee
     };
     return Parser {
