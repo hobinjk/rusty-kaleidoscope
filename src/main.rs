@@ -3,8 +3,11 @@ extern crate llvm_sys as llvm;
 
 use std::collections::HashMap;
 
-// use lib::llvm::{BuilderRef, ContextRef, ExecutionEngineRef, False, ModuleRef, PassManagerRef, RealULT, TypeRef, ValueRef, PrintMessageAction};
 // use lib::llvm::llvm;
+use llvm::prelude::{LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMPassManagerRef, LLVMTypeRef, LLVMValueRef};
+use llvm::execution_engine::LLVMExecutionEngineRef;
+use llvm::analysis::LLVMVerifyFunction;
+use llvm::LLVMRealPredicate;
 
 use std::char;
 use std::ffi;
@@ -40,7 +43,7 @@ impl Eq for Token {
 }
 
 trait ExprAst {
-  unsafe fn codegen(&self, &mut Parser) -> ValueRef;
+  unsafe fn codegen(&self, &mut Parser) -> LLVMValueRef;
 }
 
 struct NumberExprAst {
@@ -77,14 +80,14 @@ fn cstr<'a>(input: &'a str) -> &'a CString {
 }
 
 impl ExprAst for NumberExprAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
     return llvm::core::LLVMConstReal(ty, self.val);
   }
 }
 
 impl ExprAst for VariableExprAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     return match parser.namedValues.find_copy(&self.name) {
       Some(v) => v,
       None => panic!("Unknown variable name {}", self.name)
@@ -93,7 +96,7 @@ impl ExprAst for VariableExprAst {
 }
 
 impl ExprAst for BinaryExprAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let lhsValue = self.lhs.codegen(parser);
     let rhsValue = self.rhs.codegen(parser);
     match self.op {
@@ -104,7 +107,7 @@ impl ExprAst for BinaryExprAst {
       Token::Char('*') =>
         return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, cstr("multmp").as_ptr()),
       Token::Char('<') => {
-        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, RealULT as c_uint, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
+        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, LLVMRealULT, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
         let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
         return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, cstr("booltmp").as_ptr());
       }
@@ -117,12 +120,12 @@ impl ExprAst for BinaryExprAst {
 }
 
 impl ExprAst for CallExprAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
-    let funType : TypeRef = parser.getDoubleFunType(self.args.len());
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
+    let funType : LLVMTypeRef = parser.getDoubleFunType(self.args.len());
     let calleeF = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.callee).as_ptr(), funType);
 
     // TODO check arg size
-    let mut argsV : Vec<ValueRef> = Vec::new();
+    let mut argsV : Vec<LLVMValueRef> = Vec::new();
     for arg in self.args.iter() {
       argsV.push(arg.codegen(parser));
     }
@@ -132,7 +135,7 @@ impl ExprAst for CallExprAst {
 }
 
 impl PrototypeAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
     let fun = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.name).as_ptr(), funType);
     if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
@@ -154,7 +157,7 @@ impl PrototypeAst {
 }
 
 impl FunctionAst {
-  unsafe fn codegen(&self, parser: &mut Parser) -> ValueRef {
+  unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     parser.namedValues.clear();
 
     let fun = self.proto.codegen(parser);
@@ -163,7 +166,7 @@ impl FunctionAst {
     let body = self.body.codegen(parser);
     llvm::core::LLVMBuildRet(parser.builderRef, body);
 
-    if llvm::core::LLVMVerifyFunction(fun, PrintMessageAction as c_uint) != 0 {
+    if llvm::core::LLVMVerifyFunction(fun, LLVMPrintMessageAction) != 0 {
       println!("Function verify failed");
     }
 
@@ -177,12 +180,12 @@ impl FunctionAst {
 struct Parser {
   tokenInput: Iter<Token>,
   currentToken: Token,
-  moduleRef: ModuleRef,
-  builderRef: BuilderRef,
-  contextRef: ContextRef,
-  executionEngineRef: ExecutionEngineRef,
-  functionPassManagerRef: PassManagerRef,
-  namedValues: HashMap<String, ValueRef>
+  moduleRef: LLVMModuleRef,
+  builderRef: LLVMBuilderRef,
+  contextRef: LLVMContextRef,
+  executionEngineRef: LLVMExecutionEngineRef,
+  functionPassManagerRef: LLVMPassManagerRef,
+  namedValues: HashMap<String, LLVMValueRef>
 }
 
 type ParseResult<T> = Result<T, &'static str>;
@@ -218,7 +221,7 @@ impl Parser {
 
     let llee = unsafe {
       // initialize vars to NULL
-      let llee: ExecutionEngineRef = 0 as ExecutionEngineRef;
+      let llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
       let err: *mut char = 0 as *mut char;
       llvm::core::LLVMCreateExecutionEngineForModule(&llee, llmod, &err);
       llee
@@ -235,10 +238,10 @@ impl Parser {
     };
   }
 
-  unsafe fn getDoubleFunType(&mut self, argc: uint) -> TypeRef {
+  unsafe fn getDoubleFunType(&mut self, argc: uint) -> LLVMTypeRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
-    let doubles: Vec<TypeRef> = (0..argc).map(|_| ty).collect();
-    return llvm::core::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, False);
+    let doubles: Vec<LLVMTypeRef> = (0..argc).map(|_| ty).collect();
+    return llvm::core::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, 0);
   }
 
   fn getNextToken(&mut self) {
@@ -491,7 +494,7 @@ impl Parser {
           let tleFun = tle.codegen(self);
           llvm::core::LLVMDumpValue(tleFun);
           // we have a 0 arg function, call it using the executionEngineRef
-          let argsV: Vec<ValueRef> = Vec::new();
+          let argsV: Vec<LLVMValueRef> = Vec::new();
           println!("Executing function");
           let retValue = llvm::core::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
           let doubleTy = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
