@@ -181,7 +181,8 @@ impl FunctionAst {
 
 
 struct Parser {
-  tokenInput: Iter<Token>,
+  tokens: Vec<Token>,
+  tokenIndex: usize,
   currentToken: Token,
   moduleRef: LLVMModuleRef,
   builderRef: LLVMBuilderRef,
@@ -194,7 +195,7 @@ struct Parser {
 type ParseResult<T> = Result<T, &'static str>;
 
 impl Parser {
-  fn new(tokens: Iter<Token>) -> Parser {
+  fn new(tokens: Vec<Token>) -> Parser {
     unsafe {
       if llvm::core::LLVMRustInitializeNativeTarget() != 0 {
         panic!("initializing native target");
@@ -230,7 +231,8 @@ impl Parser {
       llee
     };
     return Parser {
-      tokenInput: tokenInput,
+      tokens: tokens,
+      tokenIndex: 0,
       currentToken: Token::Char(' '),
       moduleRef: llmod,
       builderRef: llbuilder,
@@ -248,7 +250,8 @@ impl Parser {
   }
 
   fn getNextToken(&mut self) {
-    self.currentToken = self.tokenInput.recv();
+    self.currentToken = self.tokens[self.tokenIndex];
+    self.tokenIndex += 1;
   }
 
   fn parseNumberExpr(&mut self) -> ParseResult<Box<ExprAst>> {
@@ -619,6 +622,6 @@ fn readTokens() -> Vec<Token> {
 
 fn main() {
   let tokens = readTokens();
-  let mut parser = Parser::new(tokens.iter());
+  let mut parser = Parser::new(tokens);
   parser.run();
 }
