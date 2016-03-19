@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 // use lib::llvm::llvm;
 use llvm::prelude::{LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMPassManagerRef, LLVMTypeRef, LLVMValueRef};
-use llvm::execution_engine::LLVMExecutionEngineRef;
+use llvm::execution_engine::{LLVMExecutionEngineRef, LLVMGenericValueToFloat, LLVMRunFunction, LLVMGenericValueRef};
 use llvm::analysis::LLVMVerifyFunction;
 use llvm::LLVMRealPredicate;
 
@@ -494,11 +494,11 @@ impl Parser {
           let tleFun = tle.codegen(self);
           llvm::core::LLVMDumpValue(tleFun);
           // we have a 0 arg function, call it using the executionEngineRef
-          let argsV: Vec<LLVMValueRef> = Vec::new();
+          let mut argsV: Vec<LLVMGenericValueRef> = Vec::new();
           println!("Executing function");
-          let retValue = llvm::core::LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_ptr());
+          let retValue = LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_mut_ptr());
           let doubleTy = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
-          let fl = llvm::core::LLVMGenericValueToFloat(doubleTy, retValue);
+          let fl = LLVMGenericValueToFloat(doubleTy, retValue);
           println!("Returned {}", fl);
         }
       },
