@@ -88,8 +88,8 @@ impl ExprAst for NumberExprAst {
 
 impl ExprAst for VariableExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
-    return match parser.namedValues.find_copy(&self.name) {
-      Some(v) => v,
+    return match parser.namedValues.get(&self.name) {
+      Some(v) => *v,
       None => panic!("Unknown variable name {}", self.name)
     };
   }
@@ -122,7 +122,7 @@ impl ExprAst for BinaryExprAst {
 impl ExprAst for CallExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let funType : LLVMTypeRef = parser.getDoubleFunType(self.args.len());
-    let calleeF = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.callee).as_ptr(), funType);
+    let calleeF = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(&self.callee).as_ptr(), funType);
 
     // TODO check arg size
     let mut argsV : Vec<LLVMValueRef> = Vec::new();
@@ -130,18 +130,18 @@ impl ExprAst for CallExprAst {
       argsV.push(arg.codegen(parser));
     }
 
-    return llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_ptr(), argsV.len() as c_uint, cstr("calltmp").as_ptr());
+    return llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_mut_ptr(), argsV.len() as c_uint, cstr("calltmp").as_ptr());
   }
 }
 
 impl PrototypeAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
-    let fun = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(self.name).as_ptr(), funType);
+    let fun = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(&self.name).as_ptr(), funType);
     if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
       panic!("Redefinition of function");
     }
-    let nArgs = llvm::core::LLVMCountParams(fun) as uint;
+    let nArgs = llvm::core::LLVMCountParams(fun) as usize;
     if nArgs != 0 && nArgs != self.argNames.len() {
       panic!("Redefinition of function with different argument count");
     }
@@ -241,7 +241,7 @@ impl Parser {
   unsafe fn getDoubleFunType(&mut self, argc: uint) -> LLVMTypeRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
     let doubles: Vec<LLVMTypeRef> = (0..argc).map(|_| ty).collect();
-    return llvm::core::LLVMFunctionType(ty, doubles.as_ptr(), argc as c_uint, 0);
+    return llvm::core::LLVMFunctionType(ty, doubles.as_mut_ptr(), argc as c_uint, 0);
   }
 
   fn getNextToken(&mut self) {
