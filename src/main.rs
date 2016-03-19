@@ -587,14 +587,14 @@ fn readTokens() -> Vec<Token> {
 
     if lastChr == '#' {
       loop {
-        match reader.read_char() {
-          Ok(chr) => {
+        match chars.next() {
+          Some(chr) => {
             if chr == '\r' || chr == '\n' {
               lastChr = ' ';
               break;
             }
           },
-          Err(_) => {
+          None => {
             tokens.push(Token::EndOfFile);
             return tokens;
           }
