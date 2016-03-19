@@ -228,7 +228,7 @@ impl Parser {
     };
     return Parser {
       tokenInput: tokenInput,
-      currentToken: Char(' '),
+      currentToken: Token::Char(' '),
       moduleRef: llmod,
       builderRef: llbuilder,
       contextRef: llcx,
@@ -250,7 +250,7 @@ impl Parser {
 
   fn parseNumberExpr(&mut self) -> ParseResult<Box<ExprAst>> {
     let val = match self.currentToken {
-      Number(val) => val,
+      Token::Number(val) => val,
       _ => return Err("token not a number")
     };
 
@@ -267,7 +267,7 @@ impl Parser {
     };
 
     match self.currentToken {
-      Char(')') => {},
+      Token::Char(')') => {},
       _ => return Err("expected ')'")
     }
     self.getNextToken();
@@ -276,20 +276,20 @@ impl Parser {
 
   fn parseIdentifierExpr(&mut self) -> ParseResult<Box<ExprAst>> {
     let idName = match self.currentToken {
-      Identifier(ref name) => name.clone(),
+      Token::Identifier(ref name) => name.clone(),
       _ => return Err("token not an identifier")
     };
 
     self.getNextToken();
 
     match self.currentToken {
-      Char('(') => {},
+      Token::Char('(') => {},
       _ => return Ok(Box::new(VariableExprAst{name: idName}))
     }
 
     self.getNextToken();
     let mut args: Vec<Box<ExprAst>> = Vec::new();
-    if self.currentToken != Char(')') {
+    if self.currentToken != Token::Char(')') {
       loop {
         let arg = self.parseExpression();
         match arg {
@@ -297,11 +297,11 @@ impl Parser {
           err => return err
         }
 
-        if self.currentToken == Char(')') {
+        if self.currentToken == Token::Char(')') {
           break;
         }
 
-        if self.currentToken != Char(',') {
+        if self.currentToken != Token::Char(',') {
           return Err("Expected ')' or ',' in argument list");
         }
 
@@ -316,9 +316,9 @@ impl Parser {
 
   fn parsePrimary(&mut self) -> ParseResult<Box<ExprAst>> {
     match self.currentToken {
-      Identifier(_) => return self.parseIdentifierExpr(),
-      Number(_) => return self.parseNumberExpr(),
-      Char('(') => return self.parseParenExpr(),
+      Token::Identifier(_) => return self.parseIdentifierExpr(),
+      Token::Number(_) => return self.parseNumberExpr(),
+      Token::Char('(') => return self.parseParenExpr(),
       _ => return Err("unknown token when expecting an expression")
     }
   }
@@ -361,12 +361,12 @@ impl Parser {
 
   fn parsePrototype(&mut self) -> ParseResult<Box<PrototypeAst>> { // possibly need sep. of Prototype and Expr
     let fnName: String = match self.currentToken {
-      Identifier(ref name) => name.clone(),
+      Token::Identifier(ref name) => name.clone(),
       _ => return Err("Expected function name in prototype")
     };
 
     self.getNextToken();
-    if self.currentToken != Char('(') {
+    if self.currentToken != Token::Char('(') {
       println!("had a {:?}", self.currentToken);
       return Err("Expected '(' in prototype");
     }
@@ -375,11 +375,11 @@ impl Parser {
     loop {
       self.getNextToken();
       match self.currentToken {
-        Identifier(ref name) => argNames.push(name.clone()),
+        Token::Identifier(ref name) => argNames.push(name.clone()),
         _ => break
       }
     }
-    if self.currentToken != Char(')') {
+    if self.currentToken != Token::Char(')') {
       return Err("Expected ')' in prototype");
     }
 
@@ -418,7 +418,7 @@ impl Parser {
 
   fn getTokenPrecedence(&mut self) -> int {
     match self.currentToken {
-      Char(t) => match t {
+      Token::Char(t) => match t {
         '<' => return 10,
         '+' => return 20,
         '-' => return 20,
@@ -437,9 +437,9 @@ impl Parser {
 
     loop {
       match self.currentToken {
-        Def => self.handleDefinition(),
-        Extern => self.handleExtern(),
-        Char(';') => {
+        Token::Def => self.handleDefinition(),
+        Token::Extern => self.handleExtern(),
+        Token::Char(';') => {
           self.getNextToken();
           continue;
         },
