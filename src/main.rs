@@ -15,13 +15,14 @@ use llvm::LLVMRealPredicate;
 use std::char;
 use std::ffi::CString;
 use std::io::{self, Read, Write, BufReader};
+use std::ptr;
 use std::str;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 use std::vec;
 use libc::{c_uint};
 
-#[derive(Clone,Debug)]
+#[derive(Clone)]
 enum Token {
   Def,
   Extern,
@@ -80,10 +81,6 @@ struct FunctionAst {
   body: Box<ExprAst>
 }
 
-fn cstr<'a>(input: &'a str) -> CString {
-    return CString::new(input).unwrap()
-}
-
 impl ExprAst for NumberExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
@@ -106,15 +103,15 @@ impl ExprAst for BinaryExprAst {
     let rhsValue = self.rhs.codegen(parser);
     match self.op {
       Token::Char('+') =>
-        return llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, cstr("addtmp").as_ptr()),
+        return llvm::core::LLVMBuildFAdd(parser.builderRef, lhsValue, rhsValue, CString::new("addtmp").unwrap().into_raw()),
       Token::Char('-') =>
-        return llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, cstr("subtmp").as_ptr()),
+        return llvm::core::LLVMBuildFSub(parser.builderRef, lhsValue, rhsValue, CString::new("subtmp").unwrap().into_raw()),
       Token::Char('*') =>
-        return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, cstr("multmp").as_ptr()),
+        return llvm::core::LLVMBuildFMul(parser.builderRef, lhsValue, rhsValue, CString::new("multmp").unwrap().into_raw()),
       Token::Char('<') => {
-        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, LLVMRealPredicate::LLVMRealULT, lhsValue, rhsValue, cstr("cmptmp").as_ptr());
+        let cmpValue = llvm::core::LLVMBuildFCmp(parser.builderRef, LLVMRealPredicate::LLVMRealULT, lhsValue, rhsValue, CString::new("cmptmp").unwrap().into_raw());
         let ty = llvm::core::LLVMDoubleTypeInContext(parser.contextRef);
-        return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, cstr("booltmp").as_ptr());
+        return llvm::core::LLVMBuildUIToFP(parser.builderRef, cmpValue, ty, CString::new("booltmp").unwrap().into_raw());
       }
       _ => {
         panic!("llvm code gen failed, invalid binary operation");
@@ -127,7 +124,7 @@ impl ExprAst for BinaryExprAst {
 impl ExprAst for CallExprAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let funType : LLVMTypeRef = parser.getDoubleFunType(self.args.len());
-    let calleeF = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(&self.callee).as_ptr(), funType);
+    let calleeF = parser.getOrInsertFunction(self.callee.clone(), funType);
 
     // TODO check arg size
     let mut argsV : Vec<LLVMValueRef> = Vec::new();
@@ -135,14 +132,14 @@ impl ExprAst for CallExprAst {
       argsV.push(arg.codegen(parser));
     }
 
-    return llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_mut_ptr(), argsV.len() as c_uint, cstr("calltmp").as_ptr());
+    return llvm::core::LLVMBuildCall(parser.builderRef, calleeF, argsV.as_mut_ptr(), argsV.len() as c_uint, CString::new("calltmp").unwrap().into_raw());
   }
 }
 
 impl PrototypeAst {
   unsafe fn codegen(&self, parser: &mut Parser) -> LLVMValueRef {
     let funType = parser.getDoubleFunType(self.argNames.len());
-    let fun = llvm::core::LLVMAddFunction(parser.moduleRef, cstr(&self.name).as_ptr(), funType);
+    let fun = parser.getOrInsertFunction(self.name.clone(), funType);
     if llvm::core::LLVMCountBasicBlocks(fun) != 0 {
       panic!("Redefinition of function");
     }
@@ -153,7 +150,7 @@ impl PrototypeAst {
 
     for (i, argName) in self.argNames.iter().enumerate() {
       let llarg = llvm::core::LLVMGetParam(fun, i as c_uint);
-      llvm::core::LLVMSetValueName(llarg, cstr(argName).as_ptr());
+      llvm::core::LLVMSetValueName(llarg, CString::new(argName.to_string()).unwrap().into_raw());
       parser.namedValues.insert(argName.clone(), llarg);
     }
 
@@ -166,18 +163,17 @@ impl FunctionAst {
     parser.namedValues.clear();
 
     let fun = self.proto.codegen(parser);
-    let basicBlock = llvm::core::LLVMAppendBasicBlockInContext(parser.contextRef, fun, cstr("entry").as_ptr());
+    let basicBlock = llvm::core::LLVMAppendBasicBlockInContext(parser.contextRef, fun, CString::new("entry").unwrap().into_raw());
     llvm::core::LLVMPositionBuilderAtEnd(parser.builderRef, basicBlock);
     let body = self.body.codegen(parser);
     llvm::core::LLVMBuildRet(parser.builderRef, body);
 
-    llvm::core::LLVMDumpModule(parser.moduleRef);
 
     if LLVMVerifyFunction(fun, LLVMVerifierFailureAction::LLVMPrintMessageAction) != 0 {
       println!("Function verify failed");
     }
 
-    llvm::core::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
+    // llvm::core::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
 
     return fun;
   }
@@ -192,7 +188,8 @@ struct Parser {
   contextRef: LLVMContextRef,
   executionEngineRef: LLVMExecutionEngineRef,
   functionPassManagerRef: LLVMPassManagerRef,
-  namedValues: HashMap<String, LLVMValueRef>
+  namedValues: HashMap<String, LLVMValueRef>,
+  functions: HashMap<String, LLVMValueRef>
 }
 
 type ParseResult<T> = Result<T, &'static str>;
@@ -203,13 +200,19 @@ impl Parser {
       if llvm::target::LLVM_InitializeNativeTarget() != 0 {
         panic!("initializing native target");
       }
+      if llvm::target::LLVM_InitializeNativeAsmPrinter() != 0 {
+        panic!("initializing native target");
+      }
+      if llvm::target::LLVM_InitializeNativeAsmParser() != 0 {
+        panic!("initializing native target");
+      }
     }
 
     let llcx = unsafe {
-        llvm::core::LLVMContextCreate()
+      llvm::core::LLVMContextCreate()
     };
     let llmod = unsafe {
-      llvm::core::LLVMModuleCreateWithNameInContext(cstr("kaleidoscope").as_ptr(), llcx)
+      llvm::core::LLVMModuleCreateWithNameInContext(CString::new("kaleidoscope").unwrap().into_raw(), llcx)
     };
     let llfpm = unsafe {
       llvm::core::LLVMCreateFunctionPassManagerForModule(llmod)
@@ -230,9 +233,13 @@ impl Parser {
 
     let mut llee = unsafe {
       // initialize vars to NULL
+      llvm::execution_engine::LLVMLinkInMCJIT();
       let mut llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
       let mut err: *mut i8 = 0 as *mut i8;
-      llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut llee, llmod, &mut err);
+      if llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut llee, llmod, &mut err) != 0 {
+        panic!("ceefm err {}", CString::from_raw(err).into_string().unwrap());
+      }
+      println!("ee: {:?}", llee);
       llee
     };
     return Parser {
@@ -243,8 +250,20 @@ impl Parser {
       contextRef: llcx,
       executionEngineRef: llee,
       functionPassManagerRef: llfpm,
-      namedValues: HashMap::new()
+      namedValues: HashMap::new(),
+      functions: HashMap::new()
     };
+  }
+
+  unsafe fn getOrInsertFunction(&mut self, funName: String, funType: LLVMTypeRef) -> LLVMValueRef {
+    let nameRawPtr = CString::new(funName.clone()).unwrap().into_raw();
+    let existingFun = llvm::core::LLVMGetNamedFunction(self.moduleRef, nameRawPtr);
+    if existingFun != ptr::null_mut() {
+      println!("Function already existed");
+      return existingFun;
+    }
+    let fun = llvm::core::LLVMAddFunction(self.moduleRef, nameRawPtr, funType);
+    return fun;
   }
 
   unsafe fn getDoubleFunType(&mut self, argc: usize) -> LLVMTypeRef {
@@ -498,13 +517,10 @@ impl Parser {
     let tle = self.parseTopLevelExpr();
     match tle {
       Ok(tle) => {
-        println!("Parsed a top level expr");
         unsafe {
           let tleFun = tle.codegen(self);
-          llvm::core::LLVMDumpValue(tleFun);
           // we have a 0 arg function, call it using the executionEngineRef
           let mut argsV: Vec<LLVMGenericValueRef> = Vec::new();
-          println!("Executing function");
           let retValue = LLVMRunFunction(self.executionEngineRef, tleFun, argsV.len() as c_uint, argsV.as_mut_ptr());
           let doubleTy = llvm::core::LLVMDoubleTypeInContext(self.contextRef);
           let fl = LLVMGenericValueToFloat(doubleTy, retValue);
