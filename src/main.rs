@@ -395,7 +395,6 @@ impl Parser {
 
     self.getNextToken();
     if self.currentToken != Token::Char('(') {
-      println!("had a {:?}", self.currentToken);
       return Err("Expected '(' in prototype");
     }
 
