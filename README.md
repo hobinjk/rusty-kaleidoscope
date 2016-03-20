@@ -1,25 +1,11 @@
 Rusty Kaleidoscope
 ==================
 An implementation of LLVM's wonderful Kaleidoscope tutorial in Rust. Uses
-`librustc`'s LLVM binding because it exists.
+`llvm-sys`'s LLVM binding.
 
 Compilation
 -----------
-First things first, add the following to `rust/src/rustllvm/RustWrapper.cpp`:
-```
-extern "C" bool
-LLVMRustInitializeNativeTarget() {
-  // JIT/native target initialization is handled strangely at best
-  return LLVMInitializeNativeTarget();
-}
-```
-After adding this wrapper function, re-run `make all` in your source directory.
-
-You can then build lang.rs with this invocation:
-```
-RUST_OUTDIR=<path to rust/build-triple, i.e. rust/x86_64-unknown-linux-gnu
-rustc lang.rs -g -L $RUST_OUTDIR/llvm/Release+Asserts/lib/ -L $RUST_OUTDIR/rt/
-```
+Moving to Cargo made this much easier! Just run `cargo build`!
 
 Done
 ----
@@ -30,9 +16,8 @@ Done
 
 Todo
 ----
-- Better error recovery
+- Top Level Expr's don't work
 - Exercise 4 onward
-- Ditch dependence on `librustc` and rust's source directory
 
 Example
 -------
