@@ -18,11 +18,9 @@ use std::char;
 use std::ffi::CString;
 use std::io::{self, Read, Write, BufReader};
 use std::ptr;
-use std::str;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
-use std::vec;
-use libc::{c_uint};
+use libc::c_uint;
 
 #[derive(Clone)]
 enum Token {
@@ -175,7 +173,7 @@ impl FunctionAst {
       println!("Function verify failed");
     }
 
-    // llvm::core::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
+    llvm::core::LLVMRunFunctionPassManager(parser.functionPassManagerRef, fun);
 
     return fun;
   }
@@ -232,7 +230,7 @@ impl Parser {
       llvm::core::LLVMCreateBuilderInContext(llcx)
     };
 
-    let mut llee = unsafe {
+    let llee = unsafe {
       // initialize vars to NULL
       llvm::execution_engine::LLVMLinkInMCJIT();
       let mut llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
@@ -459,7 +457,7 @@ impl Parser {
 
   fn run(&mut self) {
     print!("ready> ");
-    io::stdout().flush();
+    io::stdout().flush().unwrap();
     self.getNextToken();
 
     loop {
@@ -474,7 +472,7 @@ impl Parser {
       }
 
       print!("ready> ");
-      io::stdout().flush();
+      io::stdout().flush().unwrap();
     }
   }
 
@@ -535,8 +533,8 @@ impl Parser {
 }
 
 fn readChars(charSender: Sender<char>) {
-  let mut stdin = io::stdin();
-  let mut stdin_lock = stdin.lock();
+  let stdin = io::stdin();
+  let stdin_lock = stdin.lock();
   let mut reader = BufReader::new(stdin_lock);
 
   let mut buf = [0];
@@ -574,17 +572,17 @@ fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
             }
           },
           Err(_) => {
-            tokenSender.send(Token::EndOfFile);
+            tokenSender.send(Token::EndOfFile).unwrap();
             return;
           }
         }
       }
       if identifier == "def" {
-        tokenSender.send(Token::Def);
+        tokenSender.send(Token::Def).unwrap();
       } else if identifier == "extern" {
-        tokenSender.send(Token::Extern);
+        tokenSender.send(Token::Extern).unwrap();
       } else {
-        tokenSender.send(Token::Identifier(identifier));
+        tokenSender.send(Token::Identifier(identifier)).unwrap();
       }
       continue;
     }
@@ -603,7 +601,7 @@ fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
             }
           },
           Err(_) => {
-            tokenSender.send(Token::EndOfFile);
+            tokenSender.send(Token::EndOfFile).unwrap();
             return;
           }
         }
@@ -614,7 +612,7 @@ fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
           println!("Malformed number");
           continue;
         }
-      }));
+      })).unwrap();
       continue;
     }
 
@@ -628,7 +626,7 @@ fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
             }
           },
           Err(_) => {
-            tokenSender.send(Token::EndOfFile);
+            tokenSender.send(Token::EndOfFile).unwrap();
             return;
           }
         }
@@ -636,7 +634,7 @@ fn readTokens(chars: Receiver<char>, tokenSender: Sender<Token>) {
       continue;
     }
 
-    tokenSender.send(Token::Char(lastChr));
+    tokenSender.send(Token::Char(lastChr)).unwrap();
     // consume lastChr
     lastChr = ' ';
   }
