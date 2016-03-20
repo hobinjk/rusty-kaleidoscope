@@ -188,8 +188,7 @@ struct Parser {
   contextRef: LLVMContextRef,
   executionEngineRef: LLVMExecutionEngineRef,
   functionPassManagerRef: LLVMPassManagerRef,
-  namedValues: HashMap<String, LLVMValueRef>,
-  functions: HashMap<String, LLVMValueRef>
+  namedValues: HashMap<String, LLVMValueRef>
 }
 
 type ParseResult<T> = Result<T, &'static str>;
@@ -237,9 +236,9 @@ impl Parser {
       let mut llee: LLVMExecutionEngineRef = 0 as LLVMExecutionEngineRef;
       let mut err: *mut i8 = 0 as *mut i8;
       if llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut llee, llmod, &mut err) != 0 {
-        panic!("ceefm err {}", CString::from_raw(err).into_string().unwrap());
+        panic!("Error in LLVMCreateExecutionEngineForModule: {}",
+               CString::from_raw(err).into_string().unwrap());
       }
-      println!("ee: {:?}", llee);
       llee
     };
     return Parser {
@@ -250,8 +249,7 @@ impl Parser {
       contextRef: llcx,
       executionEngineRef: llee,
       functionPassManagerRef: llfpm,
-      namedValues: HashMap::new(),
-      functions: HashMap::new()
+      namedValues: HashMap::new()
     };
   }
 
