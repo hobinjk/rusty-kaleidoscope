@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 extern crate core;
 extern crate libc;
 extern crate llvm_sys as llvm;
